@@ -12,6 +12,7 @@ QString cacheHome();
 QString stateDir();
 QString backupsDir();
 QString cacheDir();
+QString themesDir();
 QString templatePath(const QString &name);
 QString catalogPath();
 QString expand(const QString &path);

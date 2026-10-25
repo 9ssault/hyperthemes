@@ -170,7 +170,7 @@ Item {
                 }
 
                 Text {
-                    text: root.item && root.item.installable === false ? "Browse" : "Apply"
+                    text: root.item && root.item.needsInstall ? "Install" : (root.item && root.item.installable === false ? "Browse" : "Apply")
                     color: root.item && root.item.installable === false ? "#d8b26a" : root.hex("primary", "#cfbcff")
                     font.pixelSize: 10
                     font.weight: Font.DemiBold

@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2)
 
 qt_standard_project_setup()
 
@@ -18,6 +18,8 @@ qt_add_executable(hyperthemes
     src/main.cpp
     src/applier.cpp
     src/applier.h
+    src/layoutapplier.cpp
+    src/layoutapplier.h
     src/localsource.cpp
     src/localsource.h
     src/palette.cpp
@@ -26,6 +28,8 @@ qt_add_executable(hyperthemes
     src/palettegenerator.h
     src/paths.cpp
     src/paths.h
+    src/remoteinstaller.cpp
+    src/remoteinstaller.h
     src/templaterenderer.cpp
     src/templaterenderer.h
     src/theme.cpp
@@ -37,6 +41,7 @@ qt_add_executable(hyperthemes
 target_link_libraries(hyperthemes PRIVATE
     Qt6::Core
     Qt6::Gui
+    Qt6::Network
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
@@ -64,12 +69,16 @@ if(BUILD_TESTING)
         tests/test_core.cpp
         src/applier.cpp
         src/applier.h
+        src/layoutapplier.cpp
+        src/layoutapplier.h
         src/palette.cpp
         src/palette.h
         src/palettegenerator.cpp
         src/palettegenerator.h
         src/paths.cpp
         src/paths.h
+        src/remoteinstaller.cpp
+        src/remoteinstaller.h
         src/templaterenderer.cpp
         src/templaterenderer.h
         src/theme.cpp
@@ -80,6 +89,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_core PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::Network
         Qt6::Test
     )
 
@@ -97,6 +107,8 @@ if(BUILD_TESTING)
         tests/test_qml.cpp
         src/applier.cpp
         src/applier.h
+        src/layoutapplier.cpp
+        src/layoutapplier.h
         src/localsource.cpp
         src/localsource.h
         src/palette.cpp
@@ -105,6 +117,8 @@ if(BUILD_TESTING)
         src/palettegenerator.h
         src/paths.cpp
         src/paths.h
+        src/remoteinstaller.cpp
+        src/remoteinstaller.h
         src/templaterenderer.cpp
         src/templaterenderer.h
         src/theme.cpp
@@ -115,6 +129,7 @@ if(BUILD_TESTING)
     target_link_libraries(test_qml PRIVATE
         Qt6::Core
         Qt6::Gui
+        Qt6::Network
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2

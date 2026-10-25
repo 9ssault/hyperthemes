@@ -50,6 +50,11 @@ QString cacheDir()
     return cacheHome() + QStringLiteral("/hyperthemes");
 }
 
+QString themesDir()
+{
+    return dataHome() + QStringLiteral("/hyperthemes/themes");
+}
+
 QString templatePath(const QString &name)
 {
     return QStringLiteral(":/templates/") + name;

@@ -38,12 +38,18 @@ ApplicationWindow {
     property string toast: ""
     property var applyWarnings: []
     property string applyError: ""
+    property string remoteInstallError: ""
+    property var remoteInstallTarget: null
     property bool busy: false
     property bool systemWide: false
     property bool remoteLoading: false
     property int remotePending: 0
     property string remoteError: ""
     property var backupList: []
+    property var layoutPresets: []
+    property var layoutBackups: []
+    property var layoutWarnings: []
+    property string layoutError: ""
 
     property string wallpaperPath: ""
     property string wallpaperUrl: ""
@@ -167,6 +173,7 @@ ApplicationWindow {
         selected = item;
         applyWarnings = [];
         applyError = "";
+        remoteInstallError = "";
         var options = [];
         var enabled = {};
         var targets = item.targets && item.targets.length > 0 ? item.targets : allTargets;
@@ -201,6 +208,10 @@ ApplicationWindow {
     function applySelected() {
         if (!selected || selected.installable === false) {
             notify("This entry is browse-only. Open its source page to install it.");
+            return;
+        }
+        if (selected.needsInstall) {
+            notify("Download the theme first, then apply its palette.");
             return;
         }
         var targets = targetList();
@@ -240,6 +251,40 @@ ApplicationWindow {
 
     function refreshBackups() {
         backupList = Applier.backups();
+    }
+
+    function refreshLayouts() {
+        layoutPresets = LayoutApplier.presets();
+        layoutBackups = LayoutApplier.backups();
+    }
+
+    function applyLayout(id) {
+        layoutError = "";
+        layoutWarnings = [];
+        var result = LayoutApplier.apply(id);
+        layoutWarnings = result.warnings || [];
+        if (result.ok) {
+            notify("Applied layout · backup " + result.backup);
+            page = "layouts";
+        } else {
+            layoutError = result.error || "The layout could not be applied.";
+            notify(layoutError);
+        }
+        refreshLayouts();
+    }
+
+    function restoreLayout(id) {
+        layoutError = "";
+        layoutWarnings = [];
+        var result = LayoutApplier.restore(id);
+        layoutWarnings = result.warnings || [];
+        if (result.ok)
+            notify("Restored layout · " + result.backup);
+        else {
+            layoutError = result.error || "The layout could not be restored.";
+            notify(layoutError);
+        }
+        refreshLayouts();
     }
 
     function localPath(url) {
@@ -494,7 +539,10 @@ ApplicationWindow {
             targets: ["kde"],
             palette: paletteFromSeed(name),
             remote: true,
-            installable: false,
+            installable: true,
+            needsInstall: true,
+            downloadUrl: item.downloadlink1 || "",
+            downloadName: item.downloadname1 || "",
             stars: 0
         };
     }
@@ -520,7 +568,12 @@ ApplicationWindow {
             targets: ["kde"],
             palette: paletteFromSeed(name),
             remote: true,
-            installable: false,
+            installable: true,
+            needsInstall: true,
+            downloadUrl: "",
+            downloadName: "",
+            repo: item.full_name || "",
+            defaultBranch: item.default_branch || "main",
             stars: item.stargazers_count || 0
         };
     }
@@ -596,6 +649,72 @@ ApplicationWindow {
         recompute();
     }
 
+    function installSelected() {
+        if (!selected || !selected.needsInstall)
+            return;
+        remoteInstallError = "";
+        remoteInstallTarget = selected;
+        RemoteInstaller.install(selected);
+    }
+
+    function targetsForRemoteFile(path) {
+        var lower = String(path).toLowerCase();
+        if (lower.endsWith(".colors"))
+            return ["kde"];
+        if (lower.endsWith(".colorscheme"))
+            return ["konsole"];
+        return allTargets;
+    }
+
+    function handleRemoteInstalled(result) {
+        if (!result || !result.ok) {
+            remoteInstallError = "The download could not be installed.";
+            notify(remoteInstallError);
+            return;
+        }
+
+        var target = root.remoteInstallTarget || selected;
+        var files = result.files || [];
+        for (var i = 0; i < files.length; ++i) {
+            var parsed = parseLocalTheme(files[i]);
+            if (!parsed || !parsed.palette)
+                continue;
+
+            var installed = {
+                id: target ? target.id : ("remote-" + i),
+                name: target ? target.name : parsed.name,
+                description: target ? target.description : parsed.description,
+                author: target ? target.author : parsed.author,
+                license: target ? target.license : parsed.license,
+                source: target ? target.source : "local",
+                sourceUrl: target ? target.sourceUrl : parsed.sourceUrl,
+                kind: target ? target.kind : "remote",
+                mode: parsed.mode || "dark",
+                flavour: parsed.flavour || "default",
+                variant: parsed.variant || "tonalspot",
+                wallpaper: "",
+                preview: target ? target.preview : "",
+                installPath: parsed.installPath || files[i],
+                targets: targetsForRemoteFile(files[i]),
+                palette: parsed.palette,
+                remote: true,
+                installable: true,
+                needsInstall: false,
+                installed: true,
+                stars: target ? target.stars : 0
+            };
+            root.remoteInstallTarget = null;
+            selectTheme(installed);
+            notify("Installed " + installed.name + ". Review the palette and apply when ready.");
+            return;
+        }
+
+        remoteInstallError = "Downloaded " + (target ? target.name : "the theme")
+            + ", but no supported color scheme was found. This source may only contain layout files.";
+        root.remoteInstallTarget = null;
+        notify(remoteInstallError);
+    }
+
     function chooseWallpaper() {
         wallpaperDialog.open();
     }
@@ -665,6 +784,25 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: RemoteInstaller
+
+        function onFinished(result) {
+            root.handleRemoteInstalled(result);
+        }
+
+        function onFailed(message) {
+            root.remoteInstallTarget = null;
+            root.remoteInstallError = message;
+            root.notify(message);
+        }
+
+        function onStatusChanged() {
+            if (RemoteInstaller.status.length > 0)
+                root.statusText = RemoteInstaller.status;
+        }
+    }
+
     FolderDialog {
         id: importDialog
         title: "Import a theme folder"
@@ -701,6 +839,7 @@ ApplicationWindow {
     Component.onCompleted: {
         loadCatalog();
         refreshBackups();
+        refreshLayouts();
     }
 
     Rectangle {
@@ -787,6 +926,14 @@ ApplicationWindow {
                     label: "Dynamic"
                     active: root.page === "dynamic"
                     onClicked: root.page = "dynamic"
+                }
+
+                NavButton {
+                    Layout.fillWidth: true
+                    icon: "▤"
+                    label: "Layouts"
+                    active: root.page === "layouts"
+                    onClicked: root.page = "layouts"
                 }
 
                 NavButton {
@@ -893,11 +1040,13 @@ ApplicationWindow {
                         Text {
                             text: root.page === "dynamic"
                                 ? "Dynamic palette"
-                                : root.page === "settings"
-                                    ? "Settings"
-                                    : root.page === "mine"
-                                        ? "My themes"
-                                        : "Explore themes"
+                                : root.page === "layouts"
+                                    ? "Layout presets"
+                                    : root.page === "settings"
+                                        ? "Settings"
+                                        : root.page === "mine"
+                                            ? "My themes"
+                                            : "Explore themes"
                             color: colors.text
                             font.pixelSize: 26
                             font.weight: Font.Bold
@@ -906,11 +1055,13 @@ ApplicationWindow {
                         Text {
                             text: root.page === "dynamic"
                                 ? "Generate a complete palette from any wallpaper with Matugen, then send it everywhere."
-                                : root.page === "settings"
-                                    ? "Sources, backups, and what HyperThemes can reach on this machine."
-                                    : root.page === "mine"
-                                        ? "Imported schemes and generated palettes. Add a folder to grow this shelf."
-                                        : "One catalog for KDE, Quickshell, Waybar, terminals, and chat apps."
+                                : root.page === "layouts"
+                                    ? "Rearrange Caelestia and KDE panels, with the previous layout backed up first."
+                                    : root.page === "settings"
+                                        ? "Sources, backups, and what HyperThemes can reach on this machine."
+                                        : root.page === "mine"
+                                            ? "Imported schemes and generated palettes. Add a folder to grow this shelf."
+                                            : "One catalog for KDE, Quickshell, Waybar, terminals, and chat apps."
                             color: colors.muted
                             font.pixelSize: 12
                         }
@@ -1000,7 +1151,7 @@ ApplicationWindow {
                 StackLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: root.page === "explore" || root.page === "mine" ? 0 : root.page === "dynamic" ? 1 : 2
+                    currentIndex: root.page === "explore" || root.page === "mine" ? 0 : root.page === "dynamic" ? 1 : root.page === "layouts" ? 2 : 3
 
                     Item {
                         GridView {
@@ -1271,6 +1422,213 @@ ApplicationWindow {
                                         wrapMode: Text.WordWrap
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    Item {
+                        ScrollView {
+                            anchors.fill: parent
+                            contentWidth: availableWidth
+                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                            ColumnLayout {
+                                width: Math.max(320, parent.width - 8)
+                                spacing: 12
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    radius: 14
+                                    color: colors.panel
+                                    border.width: 1
+                                    border.color: colors.border
+                                    implicitHeight: layoutIntro.implicitHeight + 30
+
+                                    ColumnLayout {
+                                        id: layoutIntro
+                                        anchors.fill: parent
+                                        anchors.margins: 16
+                                        spacing: 6
+
+                                        Text {
+                                            text: "PANEL LAYOUTS"
+                                            color: colors.faint
+                                            font.pixelSize: 9
+                                            font.letterSpacing: 1.1
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Caelestia presets merge into shell.json and keep your general, service and lock settings. KDE presets replace the current Plasma panels through Plasma's scripting API. Both paths take a backup first."
+                                            color: colors.muted
+                                            font.pixelSize: 11
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
+
+                                Repeater {
+                                    model: root.layoutPresets
+
+                                    Rectangle {
+                                        required property var modelData
+
+                                        Layout.fillWidth: true
+                                        radius: 14
+                                        color: colors.panel
+                                        border.width: 1
+                                        border.color: colors.border
+                                        implicitHeight: layoutCard.implicitHeight + 30
+
+                                        ColumnLayout {
+                                            id: layoutCard
+                                            anchors.fill: parent
+                                            anchors.margins: 16
+                                            spacing: 8
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 8
+
+                                                Pill {
+                                                    text: modelData.targetLabel
+                                                    background: colors.elevated
+                                                    foreground: colors.accent
+                                                }
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: modelData.name
+                                                    color: colors.text
+                                                    font.pixelSize: 14
+                                                    font.weight: Font.DemiBold
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                ActionButton {
+                                                    text: "Apply layout"
+                                                    primary: true
+                                                    onClicked: root.applyLayout(modelData.id)
+                                                }
+                                            }
+
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: modelData.description
+                                                color: colors.muted
+                                                font.pixelSize: 11
+                                                wrapMode: Text.WordWrap
+                                            }
+
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                height: 38
+                                                radius: 8
+                                                color: colors.bg
+
+                                                Rectangle {
+                                                    width: parent.width * 0.72
+                                                    height: 9
+                                                    radius: 4
+                                                    color: colors.accent
+                                                    anchors.horizontalCenter: parent.horizontalCenter
+                                                    y: String(modelData.id).indexOf("bottom") >= 0 ? parent.height - height - 6 : 6
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: root.layoutError !== ""
+                                    text: root.layoutError
+                                    color: colors.danger
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Repeater {
+                                    model: root.layoutWarnings
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "• " + modelData
+                                        color: "#d8b26a"
+                                        font.pixelSize: 10
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    radius: 14
+                                    color: colors.panel
+                                    border.width: 1
+                                    border.color: colors.border
+                                    implicitHeight: layoutBackupColumn.implicitHeight + 30
+
+                                    ColumnLayout {
+                                        id: layoutBackupColumn
+                                        anchors.fill: parent
+                                        anchors.margins: 16
+                                        spacing: 8
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+
+                                            Text {
+                                                text: "LAYOUT BACKUPS"
+                                                color: colors.faint
+                                                font.pixelSize: 9
+                                                font.letterSpacing: 1.1
+                                                font.weight: Font.DemiBold
+                                            }
+
+                                            Item { Layout.fillWidth: true }
+
+                                            ActionButton {
+                                                text: "Restore last"
+                                                enabled: root.layoutBackups.length > 0
+                                                danger: true
+                                                onClicked: root.restoreLayout(root.layoutBackups[0])
+                                            }
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            visible: root.layoutBackups.length === 0
+                                            text: "No layout backups yet."
+                                            color: colors.muted
+                                            font.pixelSize: 11
+                                        }
+
+                                        Repeater {
+                                            model: root.layoutBackups
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 8
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: modelData
+                                                    color: colors.muted
+                                                    font.pixelSize: 11
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                ActionButton {
+                                                    text: "Restore"
+                                                    onClicked: root.restoreLayout(modelData)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Item { Layout.fillHeight: true }
                             }
                         }
                     }
@@ -1661,10 +2019,39 @@ ApplicationWindow {
                         ActionButton {
                             Layout.fillWidth: true
                             Layout.topMargin: 4
+                            text: RemoteInstaller.busy ? "Downloading…" : "Download & inspect"
+                            primary: true
+                            visible: root.selected && root.selected.needsInstall === true
+                            enabled: !RemoteInstaller.busy && root.selected && root.selected.needsInstall === true
+                            onClicked: root.installSelected()
+                        }
+
+                        ActionButton {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 4
                             text: root.busy ? "Applying…" : "Apply to selected targets"
                             primary: true
+                            visible: !root.selected || root.selected.needsInstall !== true
                             enabled: !root.busy && root.selected && root.selected.installable !== false
                             onClicked: root.applySelected()
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: RemoteInstaller.busy
+                            text: RemoteInstaller.status
+                            color: colors.accent
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.remoteInstallError !== ""
+                            text: root.remoteInstallError
+                            color: colors.danger
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
                         }
 
                         ActionButton {
@@ -1679,6 +2066,15 @@ ApplicationWindow {
                             visible: root.selected && root.selected.installable === false
                             text: "Browse-only. Install this theme from its source page, then import the downloaded files."
                             color: "#d8b26a"
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.selected && root.selected.needsInstall === true
+                            text: "This downloads the source archive, extracts it safely, and looks for a supported color scheme. Nothing is applied until you press Apply."
+                            color: colors.faint
                             font.pixelSize: 10
                             wrapMode: Text.WordWrap
                         }

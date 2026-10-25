@@ -1,9 +1,11 @@
 #include <QtTest>
 
 #include "applier.h"
+#include "layoutapplier.h"
 #include "palette.h"
 #include "palettegenerator.h"
 #include "paths.h"
+#include "remoteinstaller.h"
 #include "templaterenderer.h"
 #include "theme.h"
 
@@ -11,7 +13,13 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QUrl>
 
 namespace {
 void writeFile(const QString &path, const QString &content)
@@ -64,6 +72,7 @@ private slots:
         qputenv("XDG_DATA_HOME", (m_temp.path() + QStringLiteral("/data")).toUtf8());
         qputenv("XDG_STATE_HOME", (m_temp.path() + QStringLiteral("/state")).toUtf8());
         qputenv("XDG_CACHE_HOME", (m_temp.path() + QStringLiteral("/cache")).toUtf8());
+        qputenv("HYPER_THEMES_NO_RELOAD", "1");
     }
 
     void paletteHasMaterialFallbacks()
@@ -141,6 +150,133 @@ private slots:
         QVERIFY(!QFileInfo::exists(gtkFile));
         QVERIFY(!QFileInfo::exists(qtSettings));
         QVERIFY(!QFileInfo::exists(qtColors));
+    }
+
+    void caelestiaLayoutPresetAndRestore()
+    {
+        const QString shellPath = Paths::configHome() + QStringLiteral("/caelestia/shell.json");
+        writeFile(shellPath, QStringLiteral("{\n  \"general\": {\"keep\": true},\n  \"bar\": {\"custom\": true, \"position\": \"top\"}\n}\n"));
+
+        LayoutApplier applier;
+        QCOMPARE(applier.presets().size(), 6);
+        QVERIFY(applier.kdeScript(QStringLiteral("kde-top")).contains(QStringLiteral("new Panel")));
+        QVERIFY(applier.kdeScript(QStringLiteral("kde-top")).contains(QStringLiteral("org.kde.plasma.kickoff")));
+        QVERIFY(applier.kdeScript(QStringLiteral("caelestia-top")).isEmpty());
+
+        const QVariantMap result = applier.apply(QStringLiteral("caelestia-bottom"));
+        QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(result.value(QStringLiteral("error")).toString()));
+        QVERIFY(!result.value(QStringLiteral("backup")).toString().isEmpty());
+
+        QFile file(shellPath);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        QCOMPARE(root.value(QStringLiteral("bar")).toObject().value(QStringLiteral("position")).toString(),
+                 QStringLiteral("bottom"));
+        QCOMPARE(root.value(QStringLiteral("bar")).toObject().value(QStringLiteral("custom")).toBool(), true);
+        QCOMPARE(root.value(QStringLiteral("general")).toObject().value(QStringLiteral("keep")).toBool(), true);
+        QVERIFY(root.value(QStringLiteral("bar")).toObject().value(QStringLiteral("entries")).toArray().size() > 4);
+
+        QVERIFY(applier.backups().contains(result.value(QStringLiteral("backup")).toString()));
+        const QVariantMap restored = applier.restore(result.value(QStringLiteral("backup")).toString());
+        QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(restored.value(QStringLiteral("error")).toString()));
+
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QJsonObject original = QJsonDocument::fromJson(file.readAll()).object();
+        file.close();
+        QCOMPARE(original.value(QStringLiteral("bar")).toObject().value(QStringLiteral("position")).toString(),
+                 QStringLiteral("top"));
+    }
+
+    void remoteInstallerExtractsArchive()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("bsdtar")).isEmpty())
+            QSKIP("bsdtar is not installed");
+
+        const QString sourceDir = m_temp.path() + QStringLiteral("/archive-source");
+        QDir().mkpath(sourceDir);
+        writeFile(sourceDir + QStringLiteral("/Nested.colors"),
+                  QStringLiteral("[Colors:Window]\nBackgroundNormal=101014\nForegroundNormal=f2ecf5\n"));
+        const QString archive = m_temp.path() + QStringLiteral("/theme.tar.gz");
+        QProcess tar;
+        tar.start(QStringLiteral("bsdtar"), {QStringLiteral("-czf"), archive, QStringLiteral("-C"), sourceDir, QStringLiteral("Nested.colors")});
+        QVERIFY(tar.waitForFinished(10000));
+        QCOMPARE(tar.exitCode(), 0);
+
+        RemoteInstaller installer;
+        QSignalSpy finished(&installer, &RemoteInstaller::finished);
+        QSignalSpy failed(&installer, &RemoteInstaller::failed);
+        installer.install({
+            {QStringLiteral("id"), QStringLiteral("remote-archive-test")},
+            {QStringLiteral("name"), QStringLiteral("Archive Test")},
+            {QStringLiteral("source"), QStringLiteral("github")},
+            {QStringLiteral("downloadUrl"), QUrl::fromLocalFile(archive).toString()},
+            {QStringLiteral("downloadName"), QStringLiteral("theme.tar.gz")},
+        });
+
+        QVERIFY(finished.wait(5000) || failed.count() > 0);
+        QVERIFY2(finished.count() > 0, qPrintable(failed.count() > 0 ? failed.first().first().toString() : QStringLiteral("no result")));
+        const QStringList files = finished.first().first().toMap().value(QStringLiteral("files")).toStringList();
+        QCOMPARE(files.size(), 1);
+        QVERIFY(files.first().endsWith(QStringLiteral("/Nested.colors")));
+        QVERIFY(QFileInfo::exists(files.first()));
+    }
+
+    void remoteInstallerRejectsSymlinks()
+    {
+        if (QStandardPaths::findExecutable(QStringLiteral("bsdtar")).isEmpty())
+            QSKIP("bsdtar is not installed");
+
+        const QString sourceDir = m_temp.path() + QStringLiteral("/symlink-source");
+        QDir().mkpath(sourceDir);
+        const QString escaped = sourceDir + QStringLiteral("/outside");
+        QVERIFY(QFile::link(QStringLiteral("/etc/passwd"), escaped));
+        const QString archive = m_temp.path() + QStringLiteral("/symlink.tar.gz");
+        QProcess tar;
+        tar.start(QStringLiteral("bsdtar"), {QStringLiteral("-czf"), archive, QStringLiteral("-C"), sourceDir, QStringLiteral("outside")});
+        QVERIFY(tar.waitForFinished(10000));
+        QCOMPARE(tar.exitCode(), 0);
+
+        RemoteInstaller installer;
+        QSignalSpy failed(&installer, &RemoteInstaller::failed);
+        installer.install({
+            {QStringLiteral("id"), QStringLiteral("remote-symlink-test")},
+            {QStringLiteral("name"), QStringLiteral("Symlink Test")},
+            {QStringLiteral("downloadUrl"), QUrl::fromLocalFile(archive).toString()},
+            {QStringLiteral("downloadName"), QStringLiteral("theme.tar.gz")},
+        });
+
+        QVERIFY(failed.wait(5000));
+        QVERIFY(failed.first().first().toString().contains(QStringLiteral("symbolic link")));
+    }
+
+    void remoteInstallerCopiesDirectPalette()
+    {
+        const QString sourcePath = m_temp.path() + QStringLiteral("/Direct.colors");
+        writeFile(sourcePath, QStringLiteral("[Colors:Window]\nBackgroundNormal=101014\nForegroundNormal=f2ecf5\n"));
+
+        RemoteInstaller installer;
+        QSignalSpy finished(&installer, &RemoteInstaller::finished);
+        QSignalSpy failed(&installer, &RemoteInstaller::failed);
+        installer.install({
+            {QStringLiteral("id"), QStringLiteral("remote-test")},
+            {QStringLiteral("name"), QStringLiteral("Remote Test")},
+            {QStringLiteral("source"), QStringLiteral("kde-store")},
+            {QStringLiteral("downloadUrl"), QUrl::fromLocalFile(sourcePath).toString()},
+            {QStringLiteral("downloadName"), QStringLiteral("Direct.colors")},
+        });
+
+        QVERIFY(finished.wait(5000) || failed.count() > 0);
+        QVERIFY2(finished.count() > 0, qPrintable(failed.count() > 0 ? failed.first().first().toString() : QStringLiteral("no result")));
+
+        const QVariantMap result = finished.first().first().toMap();
+        const QStringList files = result.value(QStringLiteral("files")).toStringList();
+        QCOMPARE(files.size(), 1);
+        QVERIFY(QFileInfo::exists(files.first()));
+        QVERIFY(readFile(files.first()).contains(QStringLiteral("BackgroundNormal=101014")));
+        QVERIFY(files.first().startsWith(Paths::themesDir()));
     }
 
     void matugenPalette()

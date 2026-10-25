@@ -1,6 +1,8 @@
 #include "applier.h"
+#include "layoutapplier.h"
 #include "localsource.h"
 #include "palettegenerator.h"
+#include "remoteinstaller.h"
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
@@ -22,9 +24,13 @@ int main(int argc, char *argv[])
     Applier applier;
     LocalSource localSource;
     PaletteGenerator paletteGenerator;
+    RemoteInstaller remoteInstaller;
+    LayoutApplier layoutApplier;
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Applier", &applier);
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "LocalSource", &localSource);
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "PaletteGenerator", &paletteGenerator);
+    qmlRegisterSingletonInstance("HyperThemes", 1, 0, "RemoteInstaller", &remoteInstaller);
+    qmlRegisterSingletonInstance("HyperThemes", 1, 0, "LayoutApplier", &layoutApplier);
 
     QQmlApplicationEngine engine;
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,

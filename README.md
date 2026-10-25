@@ -8,9 +8,11 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 
 ## What works
 
-- **Catalog** — bundled palettes, local imports, KDE Store, and GitHub in one searchable grid.
-- **Remote installs** — download a KDE Store or GitHub archive, validate and extract it, discover its color scheme, and turn it into an applyable theme.
-- **Palette previews** — every entry exposes a full Material-style palette, not just one accent color.
+- **Catalog** — 390 bundled themes (Caelestia flavours plus the tinted-theming Base16 collection), local imports, KDE Store, and GitHub in one searchable gallery.
+- **Picker** — live palette previews, readability badges, target filters (KDE, Quickshell, Waybar, GTK, terminals, apps), and keyboard selection.
+- **Remote installs** — download a KDE Store or GitHub archive, validate and extract it, discover its color scheme or Plasma package, and turn it into an applyable theme.
+- **Self-theming** — the app restyles its own surfaces, text, accents and controls from the selected palette. Toggle it in Settings if you prefer the default shell.
+- **Palette previews** — every installed entry exposes its real values; remote cards say "no palette yet" instead of inventing colours from a name.
 - **Dynamic wallpapers** — `matugen image` reads a wallpaper and returns a complete palette; HyperThemes applies that palette and can set the wallpaper too.
 - **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, Spicetify and Vesktop.
 - **Layout presets** — three Caelestia bar layouts and three KDE Plasma panel layouts, applied with a backup and a restore path.
@@ -41,6 +43,8 @@ cmake --install build --prefix ~/.local
 
 The app reads its catalog and templates from embedded resources, so the binary is self-contained apart from the optional tools below.
 
+Tagged releases (`v*`) also publish a `hyperthemes-<tag>-linux-x86_64.tar.gz` artifact from CI. It installs into a `usr/` prefix inside the tarball and expects the system Qt 6.5+ libraries.
+
 ## Optional tools
 
 | Tool | Used for |
@@ -50,6 +54,8 @@ The app reads its catalog and templates from embedded resources, so the binary i
 | `plasma-apply-colorscheme` | Switching the KDE scheme after writing it |
 | `plasma-apply-wallpaperimage` | Setting a generated wallpaper on Plasma |
 | `qdbus6` / `plasmashell` | Applying KDE panel layout presets |
+| `kpackagetool6` | Installing downloaded Plasma look-and-feel, style and color-scheme packages |
+| `plasma-apply-lookandfeel` | Switching to an installed global theme |
 | `caelestia` | Reloading Caelestia after a layout preset |
 | `spicetify` | Spotify palette |
 | `pkexec` | System-wide KDE writes |
@@ -87,20 +93,22 @@ A downloaded `.colors` file is applied through the KDE color scheme target. A pa
 
 ## Catalog data
 
-`catalog/themes.json` is generated from a Caelestia scheme tree:
+`catalog/themes.json` ships 390 themes: 30 Caelestia schemes (every flavour and light/dark mode) and 360 Base16 palettes from [tinted-theming/schemes](https://github.com/tinted-theming/schemes) (MIT). Base16 roles are mapped to the Material roles HyperThemes uses, including terminal colours from `base00`-`base0F`.
+
+Regenerate the file from a Caelestia scheme tree and/or a checkout of the Base16 directory:
 
 ```bash
 python3 scripts/generate_catalog.py
-# or
-python3 scripts/generate_catalog.py --source /path/to/caelestia/schemes --out catalog/themes.json
+python3 scripts/generate_catalog.py --base16 /path/to/schemes/base16
+python3 scripts/generate_catalog.py --source /path/to/caelestia/schemes --base16 /path/to/schemes/base16 --out catalog/themes.json
 ```
 
 Each entry has this shape:
 
 ```json
 {
-  "id": "bundled-dracula",
-  "name": "Dracula",
+  "id": "bundled-dracula-medium-dark",
+  "name": "Dracula Medium Dark",
   "description": "Purple, pink and cyan on a deep charcoal base.",
   "author": "Caelestia contributors",
   "license": "GPL-3.0-or-later",
@@ -109,7 +117,7 @@ Each entry has this shape:
   "kind": "static",
   "mode": "dark",
   "flavour": "default",
-  "targets": ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "spicetify", "vesktop"],
+  "targets": ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "spicetify", "vesktop"],
   "palette": {
     "background": "1e0d0f",
     "onBackground": "f9d5d7",
@@ -144,13 +152,13 @@ Placeholders use `{{role}}`, `{{role.rgb}}` and `{{role.stripped}}`. Add a templ
 The **Layouts** page ships three Caelestia presets and three KDE Plasma presets:
 
 - Caelestia top bar, bottom dock, and minimal top bar. These merge only the `bar` object into `~/.config/caelestia/shell.json`; general, service and lock settings are preserved. HyperThemes asks the running `caelestia` shell to restart when available.
-- KDE top bar, auto-hide dock, and minimal top bar. These use Plasma's `org.kde.PlasmaShell.evaluateScript` to remove the current panels and create the selected layout. The previous `plasma-org.kde.plasma.desktop-appletsrc` is backed up first.
+- KDE top bar, auto-hide dock, and minimal top bar. These use Plasma's `org.kde.PlasmaShell.evaluateScript` to build the new panel first, then replace the old ones. Widgets are checked against `knownWidgetTypes` with fallbacks (Kickoff/Kicker, Pager/Activity Pager, Icons Tasks/Task Manager, and so on). The previous `plasma-org.kde.plasma.desktop-appletsrc` is backed up first.
 
-Every layout apply creates a manifest under `~/.local/state/hyperthemes/layout-backups/` and offers **Restore**. Restoring KDE asks the user `plasma-plasmashell.service` to restart; Caelestia is asked to restart through its CLI.
+Every layout apply creates a manifest under `~/.local/state/hyperthemes/layout-backups/` and offers **Restore**. Restoring KDE stops `plasma-plasmashell.service`, writes the backed-up file while Plasma cannot flush over it, then starts the service again; Caelestia is asked to restart through its CLI. A live end-to-end test of this flow is available with `HYPER_THEMES_LIVE_PLASMA=1 ./build/test_core kdeLayoutLive`.
 
 ## Current limits
 
-- Remote installs understand color-scheme payloads. An archive that only contains panel layouts, icon packs, or app-specific assets is downloaded and inspected but cannot be applied as a palette; the app reports that instead of pretending it succeeded.
+- Remote installs understand color-scheme payloads and Plasma packages with a `metadata.json`. Archives that only contain panel layouts, icon packs, or app-specific assets are downloaded and inspected but cannot be applied as a palette or package; the app reports that instead of pretending it succeeded.
 - KDE layout presets replace the current panels. Restore exists, but a custom panel arrangement should be backed up externally if it matters.
 - Spicetify patches Spotify's client files; use `spicetify restore` if you want stock Spotify back.
 - Konsole uses the scheme after you select **HyperThemes** in its profile settings.
@@ -166,4 +174,4 @@ ctest --test-dir build --output-on-failure
 QT_QPA_PLATFORM=offscreen ./build/hyperthemes
 ```
 
-The tests cover palette fallbacks, every template, apply/rollback, Caelestia layout merge/restore, direct remote palette downloads, archive extraction, symlink rejection, and a QML smoke test. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.
+The tests cover palette fallbacks, every template, apply/rollback, Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, catalog shape, target filters, palette-driven app colours, and a QML smoke test. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.

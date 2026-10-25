@@ -20,9 +20,13 @@ Item {
         return value.charAt(0) === "#" ? value : "#" + value;
     }
 
+    readonly property bool hasColors: !!item && !!item.palette && Object.keys(item.palette).length > 0
+
     function sourceLabel(source) {
         if (source === "bundled")
             return "Bundled";
+        if (source === "base16")
+            return "Base16";
         if (source === "kde-store")
             return "KDE Store";
         if (source === "github")
@@ -150,6 +154,7 @@ Item {
                     model: ["primary", "secondary", "tertiary", "surface", "surfaceContainerHigh", "error"]
 
                     Rectangle {
+                        visible: root.hasColors
                         Layout.preferredWidth: 14
                         Layout.preferredHeight: 14
                         radius: 4
@@ -159,7 +164,21 @@ Item {
                     }
                 }
 
+                Text {
+                    visible: !root.hasColors
+                    text: "No palette yet"
+                    color: root.hex("outline", "#8b7f96")
+                    font.pixelSize: 9
+                }
+
                 Item { Layout.fillWidth: true }
+
+                Text {
+                    text: root.item && root.item.targets ? (root.item.targets.length + " targets") : ""
+                    color: root.hex("outline", "#8b7f96")
+                    font.pixelSize: 9
+                    elide: Text.ElideRight
+                }
 
                 Text {
                     text: root.item ? (root.item.mode || "") : ""

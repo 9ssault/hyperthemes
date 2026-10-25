@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QTemporaryDir>
@@ -47,8 +48,20 @@ private slots:
         QCOMPARE(m_root->property("layoutPresets").toList().size(), 6);
 
         const QVariantList themes = m_root->property("themes").toList();
-        QCOMPARE(themes.size(), 15);
-        QCOMPARE(m_root->property("filtered").toList().size(), 15);
+        QVERIFY2(themes.size() >= 300, qPrintable(QStringLiteral("catalog has %1 themes").arg(themes.size())));
+        QCOMPARE(m_root->property("filtered").toList().size(), themes.size());
+
+        bool hasBase16 = false;
+        bool hasCaelestiaFamily = false;
+        for (const QVariant &entry : themes) {
+            const QVariantMap theme = entry.toMap();
+            if (theme.value(QStringLiteral("source")).toString() == QStringLiteral("base16"))
+                hasBase16 = true;
+            if (theme.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("bundled-gruvbox")))
+                hasCaelestiaFamily = true;
+        }
+        QVERIFY(hasBase16);
+        QVERIFY(hasCaelestiaFamily);
 
         const QVariant first = themes.first();
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, first)));
@@ -56,11 +69,56 @@ private slots:
                      first.toMap().value(QStringLiteral("id")).toString());
         QVERIFY(!m_root->property("targetOptions").toList().isEmpty());
 
-        m_root->setProperty("search", QStringLiteral("dracula"));
+        m_root->setProperty("search", QStringLiteral("zenburn"));
         QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
-        QTRY_COMPARE(m_root->property("filtered").toList().size(), 1);
-        QCOMPARE(m_root->property("filtered").toList().first().toMap().value(QStringLiteral("name")).toString(),
-                 QStringLiteral("Dracula"));
+        QTRY_VERIFY(m_root->property("filtered").toList().size() >= 1);
+        QVERIFY(m_root->property("filtered").toList().first().toMap()
+                    .value(QStringLiteral("name")).toString().contains(QStringLiteral("Zenburn"), Qt::CaseInsensitive));
+
+        m_root->setProperty("search", QString());
+        m_root->setProperty("targetFilter", QStringLiteral("terminals"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+        QVERIFY(m_root->property("filtered").toList().size() > 0);
+        const QVariantList terminalThemes = m_root->property("filtered").toList();
+        QVERIFY(terminalThemes.first().toMap().value(QStringLiteral("targets")).toStringList()
+                    .contains(QStringLiteral("konsole")));
+        QCOMPARE(m_root->property("filtered").toList().size(), terminalThemes.size());
+        m_root->setProperty("targetFilter", QStringLiteral("All"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+    }
+
+    void selectedPaletteThemesTheApp()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVariantMap dracula;
+        for (const QVariant &entry : themes) {
+            const QVariantMap theme = entry.toMap();
+            if (theme.value(QStringLiteral("name")).toString().contains(QStringLiteral("Dracula"))) {
+                dracula = theme;
+                break;
+            }
+        }
+        QVERIFY(!dracula.isEmpty());
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, dracula)));
+        QVariant primary;
+        QVERIFY(QMetaObject::invokeMethod(m_root, "paletteColor", Q_RETURN_ARG(QVariant, primary),
+                                          Q_ARG(QVariant, QStringLiteral("primary")),
+                                          Q_ARG(QVariant, QStringLiteral("#000000"))));
+        const QString expected = dracula.value(QStringLiteral("palette")).toMap()
+                                     .value(QStringLiteral("primary")).toString();
+        QCOMPARE(primary.toString().remove(QLatin1Char('#')), expected);
+
+        QTRY_COMPARE(m_root->property("appAccent").value<QColor>().name().remove(QLatin1Char('#')), expected);
+        QTRY_COMPARE(m_root->property("appBackground").value<QColor>().name().remove(QLatin1Char('#')),
+                     dracula.value(QStringLiteral("palette")).toMap().value(QStringLiteral("background")).toString());
+
+        m_root->setProperty("followPalette", false);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "paletteColor", Q_RETURN_ARG(QVariant, primary),
+                                          Q_ARG(QVariant, QStringLiteral("primary")),
+                                          Q_ARG(QVariant, QStringLiteral("#0d0a10"))));
+        QCOMPARE(primary.toString(), QStringLiteral("#0d0a10"));
+        m_root->setProperty("followPalette", true);
     }
 
     void localImports()
@@ -143,6 +201,7 @@ private slots:
         QCOMPARE(remoteMap.value(QStringLiteral("source")).toString(), QStringLiteral("kde-store"));
         QCOMPARE(remoteMap.value(QStringLiteral("needsInstall")).toBool(), true);
         QCOMPARE(remoteMap.value(QStringLiteral("downloadUrl")).toString(), QStringLiteral("https://example.invalid/test.colors"));
+        QCOMPARE(remoteMap.value(QStringLiteral("palette")).toMap().isEmpty(), true);
 
         const QString path = m_temp.path() + QStringLiteral("/Remote.colors");
         QFile file(path);

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import Qt.labs.settings 1.1
 import HyperThemes 1.0
 import "components"
 
@@ -29,9 +30,23 @@ ApplicationWindow {
     property var sourceModel: [{ label: "All sources", value: "All" }]
     property var modeModel: [{ label: "Any mode", value: "All" }, { label: "Dark", value: "dark" }, { label: "Light", value: "light" }]
     property var sortModel: ["Name", "Stars", "Source"]
+    property var targetFilterModel: [
+        { label: "Everything", value: "All" },
+        { label: "KDE Plasma", value: "kde" },
+        { label: "Quickshell", value: "caelestia" },
+        { label: "Waybar", value: "waybar" },
+        { label: "GTK", value: "gtk" },
+        { label: "Terminals", value: "terminals" },
+        { label: "Apps", value: "apps" }
+    ]
     property string sourceFilter: "All"
     property string modeFilter: "All"
+    property string targetFilter: "All"
     property string sortMode: "Name"
+    property bool followPalette: true
+    readonly property color appAccent: colors.accent
+    readonly property color appBackground: colors.bg
+    readonly property color appText: colors.text
     property string search: ""
     property string page: "explore"
     property string statusText: "Ready"
@@ -68,9 +83,56 @@ ApplicationWindow {
         return value.charAt(0) === "#" ? value : "#" + value;
     }
 
+    function hasPalette(item) {
+        return !!item && !!item.palette && Object.keys(item.palette).length > 0;
+    }
+
+    function paletteColor(key, fallback) {
+        if (!followPalette || !hasPalette(selected))
+            return fallback;
+        return colorFrom(selected, key, fallback);
+    }
+
+    function channel(value) {
+        var c = value / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    function luminance(hex) {
+        var value = String(hex).replace("#", "");
+        if (value.length !== 6)
+            return 0;
+        return 0.2126 * channel(parseInt(value.substring(0, 2), 16))
+             + 0.7152 * channel(parseInt(value.substring(2, 4), 16))
+             + 0.0722 * channel(parseInt(value.substring(4, 6), 16));
+    }
+
+    function contrast(a, b) {
+        var la = luminance(a);
+        var lb = luminance(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    function contrastLabel(ratio) {
+        return ratio.toFixed(1) + ":1 " + (ratio >= 7 ? "AAA" : ratio >= 4.5 ? "AA" : ratio >= 3 ? "AA large" : "low");
+    }
+
+    function targetMatches(item, filter) {
+        if (filter === "All")
+            return true;
+        var targets = item && item.targets ? item.targets : [];
+        if (filter === "terminals")
+            return targets.indexOf("konsole") >= 0 || targets.indexOf("kitty") >= 0 || targets.indexOf("foot") >= 0;
+        if (filter === "apps")
+            return targets.indexOf("spicetify") >= 0 || targets.indexOf("vesktop") >= 0;
+        return targets.indexOf(filter) >= 0;
+    }
+
     function sourceLabel(source) {
         if (source === "bundled")
             return "Bundled";
+        if (source === "base16")
+            return "Base16";
         if (source === "kde-store")
             return "KDE Store";
         if (source === "github")
@@ -140,6 +202,8 @@ ApplicationWindow {
             if (sourceFilter !== "All" && item.source !== sourceFilter)
                 continue;
             if (modeFilter !== "All" && item.mode !== modeFilter)
+                continue;
+            if (!targetMatches(item, targetFilter))
                 continue;
             if (lower.length > 0) {
                 var haystack = ((item.name || "") + " " + (item.description || "") + " " + (item.author || "") + " " + (item.source || "")).toLowerCase();
@@ -450,75 +514,6 @@ ApplicationWindow {
         };
     }
 
-    function hslHex(hue, saturation, lightness) {
-        var h = ((hue % 360) + 360) % 360 / 360;
-        var s = Math.max(0, Math.min(1, saturation));
-        var l = Math.max(0, Math.min(1, lightness));
-
-        function channel(p, q, t) {
-            if (t < 0)
-                t += 1;
-            if (t > 1)
-                t -= 1;
-            if (t < 1 / 6)
-                return p + (q - p) * 6 * t;
-            if (t < 1 / 2)
-                return q;
-            if (t < 2 / 3)
-                return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-        }
-
-        var r;
-        var g;
-        var b;
-        if (s === 0) {
-            r = g = b = l;
-        } else {
-            var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-            var p = 2 * l - q;
-            r = channel(p, q, h + 1 / 3);
-            g = channel(p, q, h);
-            b = channel(p, q, h - 1 / 3);
-        }
-
-        function hex(value) {
-            var text = Math.round(value * 255).toString(16);
-            return text.length === 1 ? "0" + text : text;
-        }
-        return hex(r) + hex(g) + hex(b);
-    }
-
-    function paletteFromSeed(seed) {
-        var hash = 0;
-        for (var i = 0; i < seed.length; ++i)
-            hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
-        var hue = Math.abs(hash) % 360;
-        return {
-            background: hslHex(hue, 0.18, 0.07),
-            onBackground: hslHex(hue, 0.10, 0.92),
-            surface: hslHex(hue, 0.17, 0.10),
-            surfaceContainer: hslHex(hue, 0.16, 0.14),
-            surfaceContainerHigh: hslHex(hue, 0.15, 0.19),
-            surfaceBright: hslHex(hue, 0.14, 0.24),
-            onSurface: hslHex(hue, 0.08, 0.92),
-            onSurfaceVariant: hslHex(hue, 0.10, 0.72),
-            primary: hslHex(hue, 0.62, 0.70),
-            onPrimary: hslHex(hue, 0.35, 0.12),
-            secondary: hslHex(hue + 38, 0.45, 0.68),
-            tertiary: hslHex(hue + 76, 0.48, 0.68),
-            error: "ffb4ab",
-            term0: hslHex(hue, 0.18, 0.09),
-            term7: hslHex(hue, 0.08, 0.90),
-            term1: hslHex(hue + 340, 0.65, 0.68),
-            term2: hslHex(hue + 110, 0.50, 0.68),
-            term3: hslHex(hue + 60, 0.55, 0.72),
-            term4: hslHex(hue + 220, 0.55, 0.72),
-            term5: hslHex(hue + 300, 0.52, 0.72),
-            term6: hslHex(hue + 180, 0.48, 0.70)
-        };
-    }
-
     function remoteThemeFromKde(item, category) {
         var name = item.name || "KDE theme";
         return {
@@ -537,7 +532,7 @@ ApplicationWindow {
             preview: item.smallpreviewpic1 || item.previewpic1 || "",
             installPath: "",
             targets: ["kde"],
-            palette: paletteFromSeed(name),
+            palette: {},
             remote: true,
             installable: true,
             needsInstall: true,
@@ -565,8 +560,8 @@ ApplicationWindow {
             wallpaper: "",
             preview: "",
             installPath: "",
-            targets: ["kde"],
-            palette: paletteFromSeed(name),
+            targets: [],
+            palette: {},
             remote: true,
             installable: true,
             needsInstall: true,
@@ -606,13 +601,14 @@ ApplicationWindow {
         var categories = [
             { id: 112, label: "Plasma color scheme" },
             { id: 722, label: "Global theme" },
+            { id: 104, label: "Plasma style" },
             { id: 462, label: "Konsole color scheme" },
             { id: 135, label: "GTK theme" }
         ];
 
         categories.forEach(function(category) {
             ++remotePending;
-            getJson("https://api.kde-look.org/ocs/v1/content/data?format=json&pagesize=10&sort=downloads&categories=" + category.id, function(data) {
+            getJson("https://api.kde-look.org/ocs/v1/content/data?format=json&pagesize=16&sort=downloads&categories=" + category.id, function(data) {
                 if (!data || !data.data) {
                     finishRemote();
                     return;
@@ -625,7 +621,7 @@ ApplicationWindow {
             });
         });
 
-        ["quickshell theme", "waybar theme", "plasma theme"].forEach(function(query) {
+        ["quickshell theme", "waybar theme", "plasma theme", "base16 colorscheme", "catppuccin theme"].forEach(function(query) {
             ++remotePending;
             getJson("https://api.github.com/search/repositories?q=" + encodeURIComponent(query) + "&sort=stars&order=desc&per_page=12", function(data) {
                 if (!data || !data.items) {
@@ -858,19 +854,42 @@ ApplicationWindow {
     QtObject {
         id: colors
 
-        property color bg: "#0d0a10"
-        property color panel: "#121016"
-        property color panel2: "#19151e"
-        property color elevated: "#211b28"
-        property color border: "#2e2735"
-        property color text: "#f2ecf5"
-        property color muted: "#a79caf"
-        property color faint: "#746a7d"
-        property color accent: root.selected ? root.colorFrom(root.selected, "primary", "#cfbcff") : "#cfbcff"
-        property color accent2: root.selected ? root.colorFrom(root.selected, "secondary", "#8ab4f8") : "#8ab4f8"
-        property color danger: "#ffb4ab"
-        property color success: "#8fd6a0"
+        property color bg: root.paletteColor("background", "#0d0a10")
+        property color panel: root.paletteColor("surfaceContainerLow", root.paletteColor("surfaceContainer", "#121016"))
+        property color panel2: root.paletteColor("surfaceContainer", "#19151e")
+        property color elevated: root.paletteColor("surfaceContainerHigh", "#211b28")
+        property color border: root.paletteColor("outlineVariant", "#2e2735")
+        property color text: root.paletteColor("onSurface", root.paletteColor("onBackground", "#f2ecf5"))
+        property color muted: root.paletteColor("onSurfaceVariant", "#a79caf")
+        property color faint: root.paletteColor("outline", "#746a7d")
+        property color accent: root.paletteColor("primary", "#cfbcff")
+        property color accent2: root.paletteColor("secondary", "#8ab4f8")
+        property color danger: root.paletteColor("error", "#ffb4ab")
+        property color success: root.paletteColor("term2", root.paletteColor("tertiary", "#8fd6a0"))
+        property color onAccent: root.paletteColor("onPrimary", "#18121e")
     }
+
+    Settings {
+        id: prefs
+        category: "appearance"
+        property alias followPalette: root.followPalette
+        property alias systemWide: root.systemWide
+        property alias page: root.page
+    }
+
+    palette.window: colors.bg
+    palette.windowText: colors.text
+    palette.base: colors.panel2
+    palette.alternateBase: colors.panel
+    palette.text: colors.text
+    palette.button: colors.elevated
+    palette.buttonText: colors.text
+    palette.brightText: colors.danger
+    palette.highlight: colors.accent
+    palette.highlightedText: colors.onAccent
+    palette.toolTipBase: colors.elevated
+    palette.toolTipText: colors.text
+    palette.placeholderText: colors.faint
 
     Component.onCompleted: {
         loadCatalog();
@@ -999,7 +1018,7 @@ ApplicationWindow {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.themes.length + " bundled · " + root.localThemes.length + " local"
+                    text: root.themes.length + " catalog · " + root.localThemes.length + " local"
                     color: colors.muted
                     font.pixelSize: 11
                 }
@@ -1009,6 +1028,15 @@ ApplicationWindow {
                     text: root.remoteThemes.length + " community"
                     color: colors.muted
                     font.pixelSize: 11
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: root.hasPalette(root.selected)
+                    text: "Previewing " + (root.selected ? root.selected.name : "")
+                    color: colors.accent
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
                 }
 
                 Item { Layout.fillHeight: true }
@@ -1148,6 +1176,13 @@ ApplicationWindow {
                         model: root.sourceModel
                         textRole: "label"
                         font.pixelSize: 12
+                        currentIndex: {
+                            for (var i = 0; i < root.sourceModel.length; ++i) {
+                                if (root.sourceModel[i].value === root.sourceFilter)
+                                    return i;
+                            }
+                            return 0;
+                        }
                         onActivated: function(index) {
                             root.sourceFilter = root.sourceModel[index].value;
                             root.recompute();
@@ -1159,6 +1194,7 @@ ApplicationWindow {
                         model: root.modeModel
                         textRole: "label"
                         font.pixelSize: 12
+                        currentIndex: root.modeFilter === "light" ? 2 : root.modeFilter === "dark" ? 1 : 0
                         onActivated: function(index) {
                             root.modeFilter = root.modeModel[index].value;
                             root.recompute();
@@ -1169,6 +1205,7 @@ ApplicationWindow {
                         Layout.preferredWidth: 112
                         model: root.sortModel
                         font.pixelSize: 12
+                        currentIndex: Math.max(0, root.sortModel.indexOf(root.sortMode))
                         onActivated: function(index) {
                             root.sortMode = root.sortModel[index];
                             root.recompute();
@@ -1181,6 +1218,58 @@ ApplicationWindow {
                         text: root.filtered.length + (root.filtered.length === 1 ? " theme" : " themes")
                         color: colors.faint
                         font.pixelSize: 11
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    visible: root.page === "explore" || root.page === "mine"
+
+                    Repeater {
+                        model: root.targetFilterModel
+
+                        Rectangle {
+                            required property var modelData
+
+                            implicitWidth: chipText.implicitWidth + 22
+                            implicitHeight: 27
+                            radius: 14
+                            color: root.targetFilter === modelData.value ? colors.accent : colors.panel
+                            border.width: 1
+                            border.color: root.targetFilter === modelData.value ? colors.accent : colors.border
+
+                            Text {
+                                id: chipText
+                                anchors.centerIn: parent
+                                text: modelData.label
+                                color: root.targetFilter === modelData.value ? colors.onAccent : colors.muted
+                                font.pixelSize: 10
+                                font.weight: Font.DemiBold
+                            }
+
+                            TapHandler {
+                                onTapped: {
+                                    root.targetFilter = modelData.value;
+                                    root.recompute();
+                                }
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    ActionButton {
+                        visible: root.search !== "" || root.sourceFilter !== "All" || root.modeFilter !== "All" || root.targetFilter !== "All"
+                        text: "Clear filters"
+                        onClicked: {
+                            root.search = "";
+                            root.sourceFilter = "All";
+                            root.modeFilter = "All";
+                            root.targetFilter = "All";
+                            searchField.text = "";
+                            root.recompute();
+                        }
                     }
                 }
 
@@ -1202,7 +1291,18 @@ ApplicationWindow {
                             bottomMargin: 2
                             model: root.filtered
                             boundsBehavior: Flickable.StopAtBounds
+                            activeFocusOnTab: true
                             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                            Keys.onPressed: function(event) {
+                                if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter)
+                                    return;
+                                if (currentIndex < 0 || currentIndex >= root.filtered.length)
+                                    return;
+                                root.selectTheme(root.filtered[currentIndex]);
+                                if (event.modifiers & Qt.ControlModifier)
+                                    root.applySelected();
+                                event.accepted = true;
+                            }
 
                             delegate: ThemeCard {
                                 required property var modelData
@@ -1703,7 +1803,7 @@ ApplicationWindow {
 
                                         Text {
                                             Layout.fillWidth: true
-                                            text: "Bundled palettes ship with the app. Local imports read Caelestia scheme files, KDE .colors files, and HyperThemes JSON. KDE Store and GitHub are browse-only: open the source page to install those themes with their own tooling."
+                                            text: "The catalog ships with bundled Caelestia schemes and Base16 palettes. Local imports read Caelestia scheme files, KDE .colors files, and HyperThemes JSON. KDE Store and GitHub entries download on demand; archives are inspected for a palette or a Plasma package before anything touches your configuration."
                                             color: colors.muted
                                             font.pixelSize: 11
                                             wrapMode: Text.WordWrap
@@ -1728,6 +1828,66 @@ ApplicationWindow {
                                                 text: "Import folder…"
                                                 onClicked: importDialog.open()
                                             }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    radius: 14
+                                    color: colors.panel
+                                    border.width: 1
+                                    border.color: colors.border
+                                    implicitHeight: appearanceColumn.implicitHeight + 30
+
+                                    ColumnLayout {
+                                        id: appearanceColumn
+                                        anchors.fill: parent
+                                        anchors.margins: 16
+                                        spacing: 8
+
+                                        Text {
+                                            text: "APPEARANCE"
+                                            color: colors.faint
+                                            font.pixelSize: 9
+                                            font.letterSpacing: 1.1
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        RowLayout {
+                                            Layout.fillWidth: true
+
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 2
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: "Match the app to the selected palette"
+                                                    color: colors.text
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                }
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: "Surfaces, text, accents, controls and this panel follow the theme you pick. Turn it off for the original dark shell."
+                                                    color: colors.muted
+                                                    font.pixelSize: 10
+                                                    wrapMode: Text.WordWrap
+                                                }
+                                            }
+
+                                            Switch {
+                                                checked: root.followPalette
+                                                onToggled: root.followPalette = checked
+                                            }
+                                        }
+
+                                        ActionButton {
+                                            text: "Use the default app colours"
+                                            enabled: root.followPalette
+                                            onClicked: root.followPalette = false
                                         }
                                     }
                                 }
@@ -1991,8 +2151,18 @@ ApplicationWindow {
                             font.weight: Font.DemiBold
                         }
 
+                        Text {
+                            Layout.fillWidth: true
+                            visible: !root.hasPalette(root.selected)
+                            text: "No colour values yet. Download the theme to read its real palette; nothing is guessed from the name."
+                            color: colors.muted
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
+
                         GridLayout {
                             Layout.fillWidth: true
+                            visible: root.hasPalette(root.selected)
                             columns: 6
                             rowSpacing: 6
                             columnSpacing: 6
@@ -2001,6 +2171,7 @@ ApplicationWindow {
                                 model: ["background", "surface", "surfaceContainerHigh", "primary", "secondary", "tertiary", "onSurface", "onSurfaceVariant", "error", "term1", "term2", "term3"]
 
                                 Rectangle {
+                                    id: swatch
                                     Layout.preferredWidth: 42
                                     Layout.preferredHeight: 30
                                     radius: 7
@@ -2008,10 +2179,19 @@ ApplicationWindow {
                                     border.width: 1
                                     border.color: "#22000000"
 
+                                    HoverHandler { id: swatchHover }
+
+                                    ToolTip {
+                                        visible: swatchHover.hovered
+                                        text: modelData + " #" + String(root.colorFrom(root.selected, modelData, "000000")).replace("#", "")
+                                        delay: 150
+                                    }
+
                                     Text {
                                         anchors.centerIn: parent
                                         text: modelData
-                                        color: "#ccffffff"
+                                        color: root.contrast(root.colorFrom(root.selected, modelData, "#000000"), "#ffffff") > 3
+                                               ? "#dd000000" : "#ddffffff"
                                         font.pixelSize: 7
                                         elide: Text.ElideRight
                                         width: parent.width - 4
@@ -2019,6 +2199,44 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: root.hasPalette(root.selected)
+                            spacing: 6
+
+                            Rectangle {
+                                radius: 6
+                                color: colors.panel2
+                                implicitWidth: textBadge.implicitWidth + 12
+                                implicitHeight: 20
+
+                                Text {
+                                    id: textBadge
+                                    anchors.centerIn: parent
+                                    text: "Text " + root.contrastLabel(root.contrast(colors.text, colors.bg))
+                                    color: colors.muted
+                                    font.pixelSize: 9
+                                }
+                            }
+
+                            Rectangle {
+                                radius: 6
+                                color: colors.panel2
+                                implicitWidth: accentBadge.implicitWidth + 12
+                                implicitHeight: 20
+
+                                Text {
+                                    id: accentBadge
+                                    anchors.centerIn: parent
+                                    text: "Accent " + root.contrastLabel(root.contrast(colors.accent, colors.bg))
+                                    color: colors.muted
+                                    font.pixelSize: 9
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
                         }
 
                         Text {
@@ -2069,7 +2287,18 @@ ApplicationWindow {
                             primary: true
                             visible: !root.selected || root.selected.needsInstall !== true
                             enabled: !root.busy && root.selected && root.selected.installable !== false
+                                     && (root.hasPalette(root.selected) || (root.selected.packageId || "") !== "")
                             onClicked: root.applySelected()
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.selected && !root.selected.needsInstall && !root.hasPalette(root.selected)
+                                     && (root.selected.packageId || "") === ""
+                            text: "This entry has no colour values or KDE package yet. Download it from its source first."
+                            color: "#d8b26a"
+                            font.pixelSize: 10
+                            wrapMode: Text.WordWrap
+                        }
                         }
 
                         Text {

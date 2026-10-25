@@ -1,4 +1,5 @@
 #include "applier.h"
+#include "catalog.h"
 #include "layoutapplier.h"
 #include "localsource.h"
 #include "palettegenerator.h"
@@ -22,11 +23,13 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
     Applier applier;
+    Catalog catalog;
     LocalSource localSource;
     PaletteGenerator paletteGenerator;
     RemoteInstaller remoteInstaller;
     LayoutApplier layoutApplier;
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Applier", &applier);
+    qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Catalog", &catalog);
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "LocalSource", &localSource);
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "PaletteGenerator", &paletteGenerator);
     qmlRegisterSingletonInstance("HyperThemes", 1, 0, "RemoteInstaller", &remoteInstaller);

@@ -27,7 +27,9 @@ ApplicationWindow {
     property var selected: null
     property var targetEnabled: ({})
     property var targetOptions: []
-    property var sourceModel: [{ label: "All sources", value: "All" }]
+    property var collectionModel: []
+    property var categoryModel: []
+    property int categorySignature: -1
     property var modeModel: [{ label: "Any mode", value: "All" }, { label: "Dark", value: "dark" }, { label: "Light", value: "light" }]
     property var sortModel: ["Name", "Stars", "Source"]
     property var targetFilterModel: [
@@ -40,6 +42,7 @@ ApplicationWindow {
         { label: "Apps", value: "apps" }
     ]
     property string sourceFilter: "All"
+    property string categoryFilter: "All"
     property string modeFilter: "All"
     property string targetFilter: "All"
     property string sortMode: "Name"
@@ -131,9 +134,15 @@ ApplicationWindow {
 
     function sourceLabel(source) {
         if (source === "bundled")
-            return "Bundled";
+            return "Caelestia";
         if (source === "base16")
             return "Base16";
+        if (source === "base24")
+            return "Base24";
+        if (source === "gogh")
+            return "Gogh";
+        if (source === "iterm2")
+            return "iTerm2";
         if (source === "kde-store")
             return "KDE Store";
         if (source === "github")
@@ -170,20 +179,148 @@ ApplicationWindow {
     }
 
     function loadCatalog() {
-        var text = LocalSource.readText(":/catalog/themes.json");
-        if (!text) {
+        themes = Catalog.load();
+        if (themes.length === 0) {
             statusText = "Could not load the bundled catalog";
             recompute();
             return;
         }
-        try {
-            var document = JSON.parse(text);
-            themes = document.themes || [];
-            statusText = themes.length + " themes in the catalog";
-            restoreLastTheme();
-        } catch (error) {
-            statusText = "Could not parse the bundled catalog";
+        restoreLastTheme();
+        recompute();
+        statusText = themes.length + " themes in " + categoryTile("collection").length + " collections";
+    }
+
+    function buildCollections(all) {
+        var counts = {};
+        for (var i = 0; i < all.length; ++i) {
+            var source = all[i] ? all[i].source : "";
+            if (source)
+                counts[source] = (counts[source] || 0) + 1;
         }
+        var community = (counts["kde-store"] || 0) + (counts["github"] || 0) + (counts["gitlab"] || 0);
+        var definitions = [
+            { label: "All themes", value: "All", count: all.length },
+            { label: "Caelestia", value: "bundled", count: counts["bundled"] || 0 },
+            { label: "Base16", value: "base16", count: counts["base16"] || 0 },
+            { label: "Base24", value: "base24", count: counts["base24"] || 0 },
+            { label: "Gogh", value: "gogh", count: counts["gogh"] || 0 },
+            { label: "iTerm2", value: "iterm2", count: counts["iterm2"] || 0 },
+            { label: "Local", value: "local", count: counts["local"] || 0 },
+            { label: "Community", value: "community", count: community }
+        ];
+        var model = [];
+        for (var d = 0; d < definitions.length; ++d) {
+            if (definitions[d].value === "All" || definitions[d].count > 0)
+                model.push(definitions[d]);
+        }
+        collectionModel = model;
+    }
+
+    function colourStrip(item) {
+        var keys = ["background", "surfaceContainerHigh", "primary", "secondary", "tertiary", "term2"];
+        var strip = [];
+        for (var i = 0; i < keys.length; ++i)
+            strip.push(colorFrom(item, keys[i], "#2a2630"));
+        return strip;
+    }
+
+    function buildCategoryTiles(all) {
+        if (all.length === categorySignature)
+            return;
+        categorySignature = all.length;
+        var collections = {};
+        var collectionOrder = [];
+        var families = {};
+        var familyOrder = [];
+
+        for (var i = 0; i < all.length; ++i) {
+            var item = all[i];
+            if (!item || !item.id)
+                continue;
+            var source = item.source || "other";
+            var bucket = collections[source];
+            if (!bucket) {
+                bucket = {
+                    label: sourceLabel(source),
+                    value: source,
+                    kind: "collection",
+                    count: 0,
+                    colours: colourStrip(item),
+                    samples: []
+                };
+                collections[source] = bucket;
+                collectionOrder.push(source);
+            }
+            bucket.count += 1;
+            if (bucket.samples.length < 3)
+                bucket.samples.push(item.name);
+
+            var family = item.category || "";
+            if (!family || family === bucket.label)
+                continue;
+            var entry = families[family];
+            if (!entry) {
+                entry = {
+                    label: family,
+                    value: family,
+                    kind: "family",
+                    count: 0,
+                    colours: colourStrip(item),
+                    samples: []
+                };
+                families[family] = entry;
+                familyOrder.push(family);
+            }
+            entry.count += 1;
+            if (entry.samples.length < 3)
+                entry.samples.push(item.name);
+        }
+
+        var list = [];
+        var order = ["bundled", "base16", "base24", "gogh", "iterm2", "local", "kde-store", "github", "gitlab"];
+        for (var c = 0; c < order.length; ++c) {
+            if (collections[order[c]])
+                list.push(collections[order[c]]);
+        }
+        for (var extra = 0; extra < collectionOrder.length; ++extra) {
+            var key = collectionOrder[extra];
+            if (order.indexOf(key) < 0 && collections[key])
+                list.push(collections[key]);
+        }
+
+        var familyList = [];
+        for (var f = 0; f < familyOrder.length; ++f) {
+            var candidate = families[familyOrder[f]];
+            if (candidate.count >= 2)
+                familyList.push(candidate);
+        }
+        familyList.sort(function(a, b) {
+            return b.count - a.count || a.label.localeCompare(b.label);
+        });
+
+        categoryModel = list.concat(familyList);
+    }
+
+    function categoryTile(kind) {
+        var tiles = [];
+        for (var i = 0; i < categoryModel.length; ++i) {
+            if (categoryModel[i].kind === kind)
+                tiles.push(categoryModel[i]);
+        }
+        return tiles;
+    }
+
+    function openCollection(value) {
+        sourceFilter = value;
+        categoryFilter = "All";
+        page = "explore";
+        recompute();
+    }
+
+    function openCategory(label) {
+        sourceFilter = "All";
+        categoryFilter = label;
+        page = "explore";
         recompute();
     }
 
@@ -192,25 +329,30 @@ ApplicationWindow {
         var list = [];
         var seen = {};
         var lower = search.toLowerCase();
-        var sources = ["All"];
+        buildCollections(all);
+        buildCategoryTiles(all);
 
         for (var i = 0; i < all.length; ++i) {
             var item = all[i];
             if (!item || !item.id || seen[item.id])
                 continue;
             seen[item.id] = true;
-            if (item.source && sources.indexOf(item.source) < 0)
-                sources.push(item.source);
             if (page === "mine" && item.source !== "local" && item.source !== "wallpaper")
                 continue;
-            if (sourceFilter !== "All" && item.source !== sourceFilter)
+            if (sourceFilter === "community") {
+                if (["kde-store", "github", "gitlab"].indexOf(item.source) < 0)
+                    continue;
+            } else if (sourceFilter !== "All" && item.source !== sourceFilter) {
+                continue;
+            }
+            if (categoryFilter !== "All" && (item.category || sourceLabel(item.source)) !== categoryFilter)
                 continue;
             if (modeFilter !== "All" && item.mode !== modeFilter)
                 continue;
             if (!targetMatches(item, targetFilter))
                 continue;
             if (lower.length > 0) {
-                var haystack = ((item.name || "") + " " + (item.description || "") + " " + (item.author || "") + " " + (item.source || "")).toLowerCase();
+                var haystack = ((item.name || "") + " " + (item.description || "") + " " + (item.author || "") + " " + (item.source || "") + " " + (item.category || "")).toLowerCase();
                 if (haystack.indexOf(lower) < 0)
                     continue;
             }
@@ -226,13 +368,6 @@ ApplicationWindow {
         });
 
         filtered = list;
-        var model = [{ label: "All sources", value: "All" }];
-        for (var s = 0; s < sources.length; ++s) {
-            if (sources[s] === "All")
-                continue;
-            model.push({ label: sourceLabel(sources[s]), value: sources[s] });
-        }
-        sourceModel = model;
     }
 
     function restoreLastTheme() {
@@ -250,7 +385,8 @@ ApplicationWindow {
         if (!item)
             return;
         selected = item;
-        if (item.source === "bundled" || item.source === "base16")
+        if (item.source === "bundled" || item.source === "base16" || item.source === "base24"
+                || item.source === "gogh" || item.source === "iterm2")
             prefs.lastThemeId = item.id;
         applyWarnings = [];
         applyError = "";
@@ -810,8 +946,31 @@ ApplicationWindow {
         notify(remoteInstallError);
     }
 
+    function fileUrl(path) {
+        if (path === "")
+            return "";
+        return "file://" + path.split("/").map(function(part) {
+            return encodeURIComponent(part);
+        }).join("/");
+    }
+
     function chooseWallpaper() {
         wallpaperDialog.open();
+    }
+
+    function applyWallpaperSelection() {
+        if (wallpaperPath === "") {
+            dynamicError = "Choose a wallpaper first.";
+            return;
+        }
+        var result = Applier.setWallpaper(wallpaperPath);
+        if (result.ok) {
+            dynamicError = "";
+            notify("Wallpaper updated");
+        } else {
+            dynamicError = result.error || "The wallpaper could not be set.";
+            notify(dynamicError);
+        }
     }
 
     function generateDynamic() {
@@ -949,6 +1108,7 @@ ApplicationWindow {
         property alias followPalette: root.followPalette
         property alias systemWide: root.systemWide
         property alias page: root.page
+        property alias wallpaperPath: root.wallpaperPath
         property string lastThemeId: ""
     }
 
@@ -966,7 +1126,11 @@ ApplicationWindow {
     palette.toolTipText: colors.text
     palette.placeholderText: colors.faint
 
+    onWallpaperPathChanged: wallpaperUrl = fileUrl(wallpaperPath)
+
     Component.onCompleted: {
+        if (wallpaperPath !== "")
+            wallpaperUrl = fileUrl(wallpaperPath);
         loadCatalog();
         refreshBackups();
         refreshLayouts();
@@ -1035,6 +1199,14 @@ ApplicationWindow {
 
                 NavButton {
                     Layout.fillWidth: true
+                    iconSource: "qrc:/data/icons/grid.svg"
+                    label: "Categories"
+                    active: root.page === "categories"
+                    onClicked: root.page = "categories"
+                }
+
+                NavButton {
+                    Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/heart.svg"
                     label: "My themes"
                     active: root.page === "mine"
@@ -1075,29 +1247,63 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     Layout.topMargin: 8
-                    text: "SOURCES"
-                    color: colors.faint
+                    text: "COLLECTIONS"
+                    color: colors.muted
                     font.pixelSize: 9
                     font.letterSpacing: 0.5
                     font.weight: Font.DemiBold
                 }
 
-                Text {
-                    Layout.fillWidth: true
-                    text: root.themes.length + " catalog · " + root.localThemes.length + " local"
-                    color: colors.muted
-                    font.pixelSize: 11
+                Repeater {
+                    model: root.collectionModel
+
+                    Rectangle {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 26
+                        radius: 6
+                        color: root.sourceFilter === modelData.value
+                            ? colors.elevated
+                            : collectionHover.hovered ? colors.panel2 : "transparent"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 6
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.label
+                                color: root.sourceFilter === modelData.value ? colors.text : colors.muted
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                text: modelData.count
+                                color: colors.faint
+                                font.pixelSize: 10
+                            }
+                        }
+
+                        HoverHandler {
+                            id: collectionHover
+                        }
+
+                        TapHandler {
+                            onTapped: {
+                                root.sourceFilter = modelData.value;
+                                root.categoryFilter = "All";
+                                root.recompute();
+                            }
+                        }
+                    }
                 }
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.remoteThemes.length > 0 ? root.remoteThemes.length + " community" : "Community not loaded"
-                    color: colors.muted
-                    font.pixelSize: 11
-                }
-
-                Text {
-                    Layout.fillWidth: true
+                    Layout.topMargin: 4
                     visible: root.hasPalette(root.selected)
                     text: "Previewing " + (root.selected ? root.selected.name : "")
                     color: colors.accent
@@ -1174,9 +1380,11 @@ ApplicationWindow {
                                     ? "Layout presets"
                                     : root.page === "settings"
                                         ? "Settings"
-                                        : root.page === "mine"
-                                            ? "My themes"
-                                            : "Explore themes"
+                                        : root.page === "categories"
+                                            ? "Categories"
+                                            : root.page === "mine"
+                                                ? "My themes"
+                                                : "Explore themes"
                             color: colors.text
                             font.pixelSize: 24
                             font.weight: Font.DemiBold
@@ -1189,6 +1397,8 @@ ApplicationWindow {
                                     ? "Rearrange Caelestia and KDE panels, with the previous layout backed up first."
                                     : root.page === "settings"
                                         ? "Sources, backups, and what HyperThemes can reach on this machine."
+                                        : root.page === "categories"
+                                            ? "Browse the catalog by collection or by theme family."
                                         : root.page === "mine"
                                             ? "Imported schemes and generated palettes. Add a folder to grow this shelf."
                                             : "One catalog for KDE, Quickshell, Waybar, terminals, and chat apps."
@@ -1200,6 +1410,7 @@ ApplicationWindow {
                     Item { Layout.fillWidth: true }
 
                     ActionButton {
+                        visible: root.page === "explore" || root.page === "mine"
                         text: root.remoteLoading ? "Loading…" : "Refresh community"
                         iconSource: "qrc:/data/icons/refresh.svg"
                         enabled: !root.remoteLoading
@@ -1207,6 +1418,7 @@ ApplicationWindow {
                     }
 
                     ActionButton {
+                        visible: root.page === "explore" || root.page === "mine"
                         text: "Import folder"
                         iconSource: "qrc:/data/icons/folder.svg"
                         primary: true
@@ -1221,7 +1433,7 @@ ApplicationWindow {
 
                     TextField {
                         id: searchField
-                        Layout.preferredWidth: 270
+                        Layout.preferredWidth: 300
                         Layout.preferredHeight: 32
                         leftPadding: 32
                         placeholderText: "Search themes, authors, sources…"
@@ -1255,25 +1467,6 @@ ApplicationWindow {
                     }
 
                     ComboBox {
-                        Layout.preferredWidth: 150
-                        model: root.sourceModel
-                        Layout.preferredHeight: 32
-                        textRole: "label"
-                        font.pixelSize: 12
-                        currentIndex: {
-                            for (var i = 0; i < root.sourceModel.length; ++i) {
-                                if (root.sourceModel[i].value === root.sourceFilter)
-                                    return i;
-                            }
-                            return 0;
-                        }
-                        onActivated: function(index) {
-                            root.sourceFilter = root.sourceModel[index].value;
-                            root.recompute();
-                        }
-                    }
-
-                    ComboBox {
                         Layout.preferredWidth: 128
                         model: root.modeModel
                         Layout.preferredHeight: 32
@@ -1299,6 +1492,32 @@ ApplicationWindow {
                     }
 
                     Item { Layout.fillWidth: true }
+
+                    Rectangle {
+                        visible: root.categoryFilter !== "All"
+                        implicitWidth: categoryChip.implicitWidth + 18
+                        implicitHeight: 22
+                        radius: 11
+                        color: colors.panel2
+                        border.width: 1
+                        border.color: colors.accent
+
+                        Text {
+                            id: categoryChip
+                            anchors.centerIn: parent
+                            text: root.categoryFilter + "  ×"
+                            color: colors.accent
+                            font.pixelSize: 10
+                            font.weight: Font.Medium
+                        }
+
+                        TapHandler {
+                            onTapped: {
+                                root.categoryFilter = "All";
+                                root.recompute();
+                            }
+                        }
+                    }
 
                     Text {
                         text: root.filtered.length + (root.filtered.length === 1 ? " theme" : " themes")
@@ -1346,11 +1565,12 @@ ApplicationWindow {
                     Item { Layout.fillWidth: true }
 
                     ActionButton {
-                        visible: root.search !== "" || root.sourceFilter !== "All" || root.modeFilter !== "All" || root.targetFilter !== "All"
+                        visible: root.search !== "" || root.sourceFilter !== "All" || root.categoryFilter !== "All" || root.modeFilter !== "All" || root.targetFilter !== "All"
                         text: "Clear filters"
                         onClicked: {
                             root.search = "";
                             root.sourceFilter = "All";
+                            root.categoryFilter = "All";
                             root.modeFilter = "All";
                             root.targetFilter = "All";
                             searchField.text = "";
@@ -1359,17 +1579,20 @@ ApplicationWindow {
                     }
                 }
 
-                StackLayout {
+                Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    currentIndex: root.page === "explore" || root.page === "mine" ? 0 : root.page === "dynamic" ? 1 : root.page === "layouts" ? 2 : 3
 
                     Item {
+                        anchors.fill: parent
+                        visible: root.page === "explore" || root.page === "mine"
                         GridView {
                             id: grid
+                            objectName: "themeGrid"
                             anchors.fill: parent
                             clip: true
-                            cellWidth: 292
+                            readonly property int columns: Math.max(1, Math.round(width / 300))
+                            cellWidth: Math.floor((width - 8) / columns)
                             cellHeight: 264
                             leftMargin: 2
                             topMargin: 2
@@ -1393,7 +1616,7 @@ ApplicationWindow {
                             delegate: ThemeCard {
                                 required property var modelData
 
-                                width: 280
+                                width: grid.cellWidth - 12
                                 height: 248
                                 item: modelData
                                 selected: root.selected && root.selected.id === modelData.id
@@ -1436,6 +1659,8 @@ ApplicationWindow {
                     }
 
                     Item {
+                        anchors.fill: parent
+                        visible: root.page === "dynamic"
                         ColumnLayout {
                             anchors.fill: parent
                             spacing: 14
@@ -1445,8 +1670,9 @@ ApplicationWindow {
                                 spacing: 16
 
                                 Rectangle {
-                                    Layout.preferredWidth: 360
-                                    Layout.preferredHeight: 220
+                                    Layout.preferredWidth: 300
+                                    Layout.maximumWidth: 340
+                                    Layout.preferredHeight: 200
                                     radius: 12
                                     color: colors.panel2
                                     border.width: 1
@@ -1492,13 +1718,14 @@ ApplicationWindow {
                                         elide: Text.ElideMiddle
                                     }
 
-                                    RowLayout {
+                                    Flow {
+                                        Layout.fillWidth: true
                                         spacing: 8
 
                                         ActionButton {
-                                        text: "Choose image"
-                                        iconSource: "qrc:/data/icons/image.svg"
-                                        onClicked: root.chooseWallpaper()
+                                            text: "Choose image"
+                                            iconSource: "qrc:/data/icons/image.svg"
+                                            onClicked: root.chooseWallpaper()
                                         }
 
                                         ActionButton {
@@ -1507,6 +1734,13 @@ ApplicationWindow {
                                             primary: true
                                             enabled: !root.busy && root.wallpaperPath !== ""
                                             onClicked: root.generateDynamic()
+                                        }
+
+                                        ActionButton {
+                                            text: "Set wallpaper"
+                                            iconSource: "qrc:/data/icons/image.svg"
+                                            enabled: !root.busy && root.wallpaperPath !== ""
+                                            onClicked: root.applyWallpaperSelection()
                                         }
                                     }
 
@@ -1521,7 +1755,7 @@ ApplicationWindow {
 
                                     Text {
                                         Layout.fillWidth: true
-                                        text: "Matugen writes no files here: HyperThemes asks it for the palette, then applies the targets you choose."
+                                        text: "Matugen writes no files here: HyperThemes asks it for the palette, then applies the targets you choose. Your wallpaper is remembered between launches."
                                         color: colors.faint
                                         font.pixelSize: 10
                                         wrapMode: Text.WordWrap
@@ -1655,6 +1889,8 @@ ApplicationWindow {
                     }
 
                     Item {
+                        anchors.fill: parent
+                        visible: root.page === "layouts"
                         ScrollView {
                             anchors.fill: parent
                             contentWidth: availableWidth
@@ -1863,6 +2099,8 @@ ApplicationWindow {
                     }
 
                     Item {
+                        anchors.fill: parent
+                        visible: root.page === "settings"
                         ScrollView {
                             anchors.fill: parent
                             contentWidth: availableWidth
@@ -2103,6 +2341,104 @@ ApplicationWindow {
                             }
                         }
                     }
+                    Item {
+                        anchors.fill: parent
+                        visible: root.page === "categories"
+                        ScrollView {
+                            anchors.fill: parent
+                            contentWidth: availableWidth
+                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                            ColumnLayout {
+                                width: Math.max(320, parent.width - 10)
+                                spacing: 14
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.topMargin: 4
+
+                                    Text {
+                                        text: "COLLECTIONS"
+                                        color: colors.muted
+                                        font.pixelSize: 9
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    Text {
+                                        text: root.categoryTile("collection").length + " sources"
+                                        color: colors.faint
+                                        font.pixelSize: 10
+                                    }
+                                }
+
+                                Grid {
+                                    Layout.fillWidth: true
+                                    columns: Math.max(1, Math.floor(width / 228))
+                                    columnSpacing: 12
+                                    rowSpacing: 12
+
+                                    Repeater {
+                                        model: root.categoryTile("collection")
+
+                                        CategoryTile {
+                                            paletteColors: root.uiColors
+                                            onActivated: root.openCollection(root.modelData.value)
+                                        }
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.topMargin: 6
+
+                                    Text {
+                                        text: "THEME FAMILIES"
+                                        color: colors.muted
+                                        font.pixelSize: 9
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    Text {
+                                        text: root.categoryTile("family").length + " families"
+                                        color: colors.faint
+                                        font.pixelSize: 10
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: root.categoryTile("family").length === 0
+                                    text: "No named families in the catalog yet."
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                }
+
+                                Grid {
+                                    Layout.fillWidth: true
+                                    columns: Math.max(1, Math.floor(width / 228))
+                                    columnSpacing: 12
+                                    rowSpacing: 12
+
+                                    Repeater {
+                                        model: root.categoryTile("family")
+
+                                        CategoryTile {
+                                            paletteColors: root.uiColors
+                                            onActivated: root.openCategory(root.modelData.value)
+                                        }
+                                    }
+                                }
+
+                                Item { Layout.preferredHeight: 8 }
+                            }
+                        }
+                    }
                 }
 
                 Rectangle {
@@ -2210,6 +2546,16 @@ ApplicationWindow {
                             color: colors.muted
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.selected !== null && root.selected.category !== undefined
+                            text: (root.selected ? (root.selected.category || "") : "")
+                                  + (root.selected ? "  ·  " + root.sourceLabel(root.selected.source) : "")
+                            color: colors.accent
+                            font.pixelSize: 10
+                            elide: Text.ElideRight
                         }
 
                         RowLayout {

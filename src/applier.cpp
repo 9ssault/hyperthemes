@@ -565,6 +565,34 @@ void Applier::applyVesktop(Session &session, const Theme &theme)
     }
 }
 
+QVariantMap Applier::setWallpaper(const QString &path)
+{
+    if (path.isEmpty() || !QFileInfo::exists(path))
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("Wallpaper not found: %1").arg(path)}};
+
+    Session session;
+    session.id = timestampId(QStringLiteral("wallpaper"));
+    session.dir = sessionDir(session.id);
+    session.themeId = QStringLiteral("wallpaper");
+    QDir().mkpath(session.dir + QStringLiteral("/files"));
+
+    Theme theme;
+    theme.name = QStringLiteral("Wallpaper");
+    theme.wallpaper = path;
+    applyWallpaper(session, theme);
+
+    if (session.applied.isEmpty()) {
+        setStatus(QStringLiteral("No wallpaper backend found"));
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("No wallpaper backend found; set it manually: %1").arg(path)},
+                {QStringLiteral("warnings"), session.warnings}};
+    }
+
+    setStatus(QStringLiteral("Wallpaper updated"));
+    return {{QStringLiteral("ok"), true}, {QStringLiteral("warnings"), session.warnings}};
+}
+
 QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targets, bool systemWide)
 {
     Theme theme = Theme::fromMap(themeMap);

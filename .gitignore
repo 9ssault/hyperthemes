@@ -4,3 +4,5 @@ build-*/
 CMakeUserPresets.json
 *.user
 *.swp
+__pycache__/
+*.pyc

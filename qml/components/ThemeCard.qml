@@ -51,9 +51,15 @@ Item {
 
     function sourceLabel(source) {
         if (source === "bundled")
-            return "Bundled";
+            return "Caelestia";
         if (source === "base16")
             return "Base16";
+        if (source === "base24")
+            return "Base24";
+        if (source === "gogh")
+            return "Gogh";
+        if (source === "iterm2")
+            return "iTerm2";
         if (source === "kde-store")
             return "KDE Store";
         if (source === "github")
@@ -120,7 +126,7 @@ Item {
                 spacing: 6
 
                 Pill {
-                    text: root.sourceLabel(root.item ? root.item.source : "")
+                    text: (root.item && root.item.category ? root.item.category : root.sourceLabel(root.item ? root.item.source : ""))
                           + (root.item && root.item.mode ? "  ·  " + root.item.mode.charAt(0).toUpperCase() + root.item.mode.slice(1) : "")
                     background: "#8c0e0b13"
                     foreground: "#e8e2ee"

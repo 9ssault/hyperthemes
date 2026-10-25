@@ -8,12 +8,13 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 
 ## What works
 
-- **Catalog** — 390 bundled themes (Caelestia flavours plus the tinted-theming Base16 collection), local imports, KDE Store, GitHub and GitLab in one searchable gallery.
+- **Catalog** — 1,655 bundled themes in 61 categories: Caelestia flavours, the tinted-theming Base16 and Base24 collections, Gogh and iTerm2 terminal schemes. Local imports, KDE Store, GitHub and GitLab sit in the same searchable gallery.
+- **Categories** — a dedicated shelf that groups the catalog into collections (Caelestia, Base16, Base24, Gogh, iTerm2) and theme families (Catppuccin, Gruvbox, Tokyo Night, Nord, Dracula and 47 more), with palette strips and counts.
 - **Picker** — live palette previews, readability badges, target filters (KDE, Quickshell, Waybar, GTK, terminals, apps), and keyboard selection.
 - **Remote installs** — download a KDE Store or GitHub archive, validate and extract it, discover its color scheme or Plasma package, and turn it into an applyable theme.
 - **Self-theming** — the app restyles its own surfaces, text, accents and controls from the selected palette. Toggle it in Settings if you prefer the default shell.
 - **Palette previews** — every installed entry exposes its real values; remote cards say "no palette yet" instead of inventing colours from a name.
-- **Dynamic wallpapers** — `matugen image` reads a wallpaper and returns a complete palette; HyperThemes applies that palette and can set the wallpaper too.
+- **Dynamic wallpapers** — pick any image, let `matugen` derive a complete palette, apply that palette, or set the custom wallpaper on its own. The chosen image is remembered between launches.
 - **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, Spicetify and Vesktop.
 - **Layout presets** — three Caelestia bar layouts and three KDE Plasma panel layouts, applied with a backup and a restore path.
 - **User or system-wide** — KDE color schemes can be written to `~/.local/share/color-schemes` or `/usr/share/color-schemes` through `pkexec`.
@@ -93,17 +94,25 @@ A downloaded `.colors` file is applied through the KDE color scheme target. A pa
 
 ## Catalog data
 
-`catalog/themes.json` ships 390 themes: 30 Caelestia schemes (every flavour and light/dark mode) and 360 Base16 palettes from [tinted-theming/schemes](https://github.com/tinted-theming/schemes) (MIT). Base16 roles are mapped to the Material roles HyperThemes uses, including terminal colours from `base00`-`base0F`.
+The catalog ships 1,655 themes in 61 category folders under `catalog/`, one JSON file per theme:
 
-Regenerate the file from a Caelestia scheme tree and/or a checkout of the Base16 directory:
+- 30 Caelestia schemes — every flavour and light/dark mode.
+- 360 Base16 and 240 Base24 palettes from [tinted-theming/schemes](https://github.com/tinted-theming/schemes) (MIT).
+- 807 Gogh terminal schemes from [Gogh-Co/Gogh](https://github.com/Gogh-Co/Gogh) (MIT).
+- 218 iTerm2 schemes from [mbadolato/iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) (MIT).
+
+Base16 and Base24 roles are mapped to the Material roles HyperThemes uses, including terminal colours from `base00`-`base0F`. Family rules in `scripts/generate_catalog.py` tag each file with a `category` (Catppuccin, Gruvbox, Tokyo Night, Nord and so on) while the `source` keeps the collection it came from.
+
+Regenerate the catalog from the upstream checkouts:
 
 ```bash
 python3 scripts/generate_catalog.py
 python3 scripts/generate_catalog.py --base16 /path/to/schemes/base16
-python3 scripts/generate_catalog.py --source /path/to/caelestia/schemes --base16 /path/to/schemes/base16 --out catalog/themes.json
+python3 scripts/generate_catalog.py --source /path/to/caelestia/schemes --base16 /path/to/schemes/base16 \
+    --base24 /path/to/schemes/base24 --gogh /path/to/Gogh/themes --iterm2 /path/to/windowsterminal
 ```
 
-Each entry has this shape:
+The script wipes stale `*.json` files in the output directory before writing, so `catalog/` always matches the sources. Each entry has this shape:
 
 ```json
 {
@@ -113,6 +122,7 @@ Each entry has this shape:
   "author": "Caelestia contributors",
   "license": "GPL-3.0-or-later",
   "source": "bundled",
+  "category": "Dracula",
   "sourceUrl": "https://github.com/caelestia-dots/cli",
   "kind": "static",
   "mode": "dark",
@@ -176,4 +186,4 @@ ctest --test-dir build --output-on-failure
 QT_QPA_PLATFORM=offscreen ./build/hyperthemes
 ```
 
-The tests cover palette fallbacks, every template, apply/rollback, Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, catalog shape, target filters, palette-driven app colours, and a QML smoke test. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.
+The tests cover palette fallbacks, every template, apply/rollback, Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, and a QML smoke test. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.

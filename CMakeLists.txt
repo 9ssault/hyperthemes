@@ -12,13 +12,15 @@ qt_standard_project_setup()
 
 file(GLOB_RECURSE HT_QML_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/*.qml)
 file(GLOB HT_TEMPLATES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS templates/*)
-file(GLOB HT_CATALOG RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS catalog/*.json)
+file(GLOB_RECURSE HT_CATALOG RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS catalog/*.json)
 file(GLOB HT_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS data/icons/*.svg)
 
 qt_add_executable(hyperthemes
     src/main.cpp
     src/applier.cpp
     src/applier.h
+    src/catalog.cpp
+    src/catalog.h
     src/layoutapplier.cpp
     src/layoutapplier.h
     src/localsource.cpp
@@ -71,6 +73,8 @@ if(BUILD_TESTING)
         tests/test_core.cpp
         src/applier.cpp
         src/applier.h
+        src/catalog.cpp
+        src/catalog.h
         src/layoutapplier.cpp
         src/layoutapplier.h
         src/palette.cpp
@@ -109,6 +113,8 @@ if(BUILD_TESTING)
         tests/test_qml.cpp
         src/applier.cpp
         src/applier.h
+        src/catalog.cpp
+        src/catalog.h
         src/layoutapplier.cpp
         src/layoutapplier.h
         src/localsource.cpp

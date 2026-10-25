@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "applier.h"
+#include "catalog.h"
 #include "layoutapplier.h"
 #include "localsource.h"
 #include "palettegenerator.h"
@@ -35,6 +36,7 @@ private slots:
 
         QQuickStyle::setStyle(QStringLiteral("Basic"));
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Applier", &m_applier);
+        qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Catalog", &m_catalog);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "LocalSource", &m_localSource);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "PaletteGenerator", &m_paletteGenerator);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "RemoteInstaller", &m_remoteInstaller);
@@ -51,20 +53,40 @@ private slots:
         QCOMPARE(m_root->property("layoutPresets").toList().size(), 6);
 
         const QVariantList themes = m_root->property("themes").toList();
-        QVERIFY2(themes.size() >= 300, qPrintable(QStringLiteral("catalog has %1 themes").arg(themes.size())));
+        QVERIFY2(themes.size() >= 1000, qPrintable(QStringLiteral("catalog has %1 themes").arg(themes.size())));
         QCOMPARE(m_root->property("filtered").toList().size(), themes.size());
 
         bool hasBase16 = false;
         bool hasCaelestiaFamily = false;
+        bool hasCategories = true;
         for (const QVariant &entry : themes) {
             const QVariantMap theme = entry.toMap();
             if (theme.value(QStringLiteral("source")).toString() == QStringLiteral("base16"))
                 hasBase16 = true;
             if (theme.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("bundled-gruvbox")))
                 hasCaelestiaFamily = true;
+            if (theme.value(QStringLiteral("category")).toString().isEmpty())
+                hasCategories = false;
         }
         QVERIFY(hasBase16);
         QVERIFY(hasCaelestiaFamily);
+        QVERIFY(hasCategories);
+
+        const QVariantList categories = m_root->property("categoryModel").toList();
+        QVERIFY(!categories.isEmpty());
+        int familyCount = 0;
+        for (const QVariant &entry : categories) {
+            if (entry.toMap().value(QStringLiteral("kind")).toString() == QStringLiteral("family"))
+                ++familyCount;
+        }
+        QVERIFY2(familyCount > 10, qPrintable(QStringLiteral("only %1 families").arg(familyCount)));
+
+        auto *grid = m_root->findChild<QObject *>(QStringLiteral("themeGrid"));
+        QVERIFY(grid);
+        const qreal gridWidth = grid->property("width").toReal();
+        QVERIFY2(gridWidth > 600.0, qPrintable(QStringLiteral("grid is only %1 px wide").arg(gridWidth)));
+        QVERIFY(grid->property("columns").toInt() >= 2);
+        QVERIFY(grid->property("cellWidth").toReal() * grid->property("columns").toInt() <= gridWidth);
 
         const QVariant first = themes.first();
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, first)));
@@ -75,8 +97,13 @@ private slots:
         m_root->setProperty("search", QStringLiteral("zenburn"));
         QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
         QTRY_VERIFY(m_root->property("filtered").toList().size() >= 1);
-        QVERIFY(m_root->property("filtered").toList().first().toMap()
-                    .value(QStringLiteral("name")).toString().contains(QStringLiteral("Zenburn"), Qt::CaseInsensitive));
+        bool namedZenburn = false;
+        for (const QVariant &entry : m_root->property("filtered").toList()) {
+            if (entry.toMap().value(QStringLiteral("name")).toString()
+                    .contains(QStringLiteral("Zenburn"), Qt::CaseInsensitive))
+                namedZenburn = true;
+        }
+        QVERIFY(namedZenburn);
 
         m_root->setProperty("search", QString());
         m_root->setProperty("targetFilter", QStringLiteral("terminals"));
@@ -87,6 +114,16 @@ private slots:
                     .contains(QStringLiteral("konsole")));
         QCOMPARE(m_root->property("filtered").toList().size(), terminalThemes.size());
         m_root->setProperty("targetFilter", QStringLiteral("All"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+
+        m_root->setProperty("categoryFilter", QStringLiteral("Catppuccin"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+        const QVariantList family = m_root->property("filtered").toList();
+        QVERIFY(!family.isEmpty());
+        QCOMPARE(family.first().toMap().value(QStringLiteral("category")).toString(),
+                 QStringLiteral("Catppuccin"));
+        QVERIFY(family.size() < themes.size());
+        m_root->setProperty("categoryFilter", QStringLiteral("All"));
         QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
     }
 
@@ -122,6 +159,20 @@ private slots:
                                           Q_ARG(QVariant, QStringLiteral("#0d0a10"))));
         QCOMPARE(primary.toString(), QStringLiteral("#0d0a10"));
         m_root->setProperty("followPalette", true);
+    }
+
+    void wallpaperSelectionIsRemembered()
+    {
+        const QString image = m_temp.path() + QStringLiteral("/my wallpaper.png");
+        QFile file(image);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("png");
+        file.close();
+
+        m_root->setProperty("wallpaperPath", image);
+        QTRY_COMPARE(m_root->property("wallpaperUrl").toString(),
+                     QStringLiteral("file://") + m_temp.path() + QStringLiteral("/my%20wallpaper.png"));
+        QCOMPARE(m_root->property("wallpaperPath").toString(), image);
     }
 
     void localImports()
@@ -203,7 +254,8 @@ private slots:
             }
         }
         QVERIFY(!chosen.isEmpty());
-        m_root->setProperty("page", QStringLiteral("explore"));
+        m_root->setProperty("page", qEnvironmentVariable("HYPER_THEMES_SCREENSHOT_PAGE",
+                                                       QStringLiteral("explore")));
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
 
         auto *window = qobject_cast<QQuickWindow *>(m_root);
@@ -285,6 +337,7 @@ private slots:
 private:
     QTemporaryDir m_temp;
     Applier m_applier;
+    Catalog m_catalog;
     LocalSource m_localSource;
     PaletteGenerator m_paletteGenerator;
     RemoteInstaller m_remoteInstaller;

@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "applier.h"
+#include "catalog.h"
 #include "layoutapplier.h"
 #include "palette.h"
 #include "palettegenerator.h"
@@ -10,6 +11,7 @@
 #include "theme.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
@@ -18,6 +20,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QScopeGuard>
+#include <QSet>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -173,6 +176,39 @@ private slots:
         QVERIFY(!QFileInfo::exists(gtkFile));
         QVERIFY(!QFileInfo::exists(qtSettings));
         QVERIFY(!QFileInfo::exists(qtColors));
+    }
+
+    void catalogLoadsEveryThemeFile()
+    {
+        Catalog catalog;
+        QElapsedTimer timer;
+        timer.start();
+        const QVariantList themes = catalog.load();
+        const qint64 elapsed = timer.elapsed();
+        qInfo() << "loaded" << themes.size() << "theme files in" << elapsed << "ms";
+
+        QVERIFY2(themes.size() >= 1000, qPrintable(QStringLiteral("only %1 themes").arg(themes.size())));
+        QVERIFY2(elapsed < 2000, qPrintable(QStringLiteral("catalog took %1 ms").arg(elapsed)));
+
+        QSet<QString> categories;
+        for (const QVariant &entry : themes) {
+            const QVariantMap theme = entry.toMap();
+            QVERIFY(!theme.value(QStringLiteral("id")).toString().isEmpty());
+            QVERIFY(!theme.value(QStringLiteral("category")).toString().isEmpty());
+            QVERIFY(!theme.value(QStringLiteral("source")).toString().isEmpty());
+            QVERIFY(!theme.value(QStringLiteral("targets")).toStringList().isEmpty());
+            QVERIFY(!theme.value(QStringLiteral("palette")).toMap().isEmpty());
+            categories.insert(theme.value(QStringLiteral("category")).toString());
+        }
+        QVERIFY2(categories.size() >= 40, qPrintable(QStringLiteral("only %1 categories").arg(categories.size())));
+    }
+
+    void wallpaperOnlyApplyChecksTheFile()
+    {
+        Applier applier;
+        const QVariantMap missing = applier.setWallpaper(m_temp.path() + QStringLiteral("/missing.png"));
+        QCOMPARE(missing.value(QStringLiteral("ok")).toBool(), false);
+        QVERIFY(missing.value(QStringLiteral("error")).toString().contains(QStringLiteral("Wallpaper")));
     }
 
     void caelestiaLayoutPresetAndRestore()

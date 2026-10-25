@@ -60,11 +60,6 @@ QString templatePath(const QString &name)
     return QStringLiteral(":/templates/") + name;
 }
 
-QString catalogPath()
-{
-    return QStringLiteral(":/catalog/themes.json");
-}
-
 QString expand(const QString &path)
 {
     if (path == QLatin1String("~"))

@@ -16,6 +16,7 @@ public:
 
     Q_INVOKABLE QVariantMap apply(const QVariantMap &theme, const QStringList &targets, bool systemWide);
     Q_INVOKABLE QVariantMap rollback(const QString &backupId = {});
+    Q_INVOKABLE QVariantMap setWallpaper(const QString &path);
     Q_INVOKABLE QStringList backups() const;
 
     QString lastBackup() const { return m_lastBackup; }

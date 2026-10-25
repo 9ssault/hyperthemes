@@ -14,6 +14,7 @@
 #include <QPalette>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QQuickWindow>
 #include <QTemporaryDir>
 
 class QmlTest : public QObject {
@@ -23,6 +24,8 @@ private slots:
     void initTestCase()
     {
         QVERIFY(m_temp.isValid());
+        QCoreApplication::setOrganizationName(QStringLiteral("HyperThemes"));
+        QCoreApplication::setApplicationName(QStringLiteral("HyperThemesTest"));
         qputenv("HOME", m_temp.path().toUtf8());
         qputenv("XDG_CONFIG_HOME", (m_temp.path() + QStringLiteral("/config")).toUtf8());
         qputenv("XDG_DATA_HOME", (m_temp.path() + QStringLiteral("/data")).toUtf8());
@@ -181,6 +184,34 @@ private slots:
         const QString backup = m_root->property("layoutBackups").toStringList().first();
         QVERIFY(QMetaObject::invokeMethod(m_root, "restoreLayout", Q_ARG(QVariant, backup)));
         QTRY_VERIFY(!QFileInfo::exists(shellPath));
+    }
+
+    void themedScreenshot()
+    {
+        const QString output = qEnvironmentVariable("HYPER_THEMES_SCREENSHOT");
+        if (output.isEmpty())
+            QSKIP("Set HYPER_THEMES_SCREENSHOT=/path/to.png to capture the window");
+
+        const QString wanted = qEnvironmentVariable("HYPER_THEMES_SCREENSHOT_THEME", QStringLiteral("Dracula"));
+        QVariantMap chosen;
+        const QVariantList themes = m_root->property("themes").toList();
+        for (const QVariant &entry : themes) {
+            const QVariantMap theme = entry.toMap();
+            if (theme.value(QStringLiteral("name")).toString().contains(wanted, Qt::CaseInsensitive)) {
+                chosen = theme;
+                break;
+            }
+        }
+        QVERIFY(!chosen.isEmpty());
+        m_root->setProperty("page", QStringLiteral("explore"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
+
+        auto *window = qobject_cast<QQuickWindow *>(m_root);
+        QVERIFY(window);
+        QTest::qWait(400);
+        const QImage image = window->grabWindow();
+        QVERIFY(!image.isNull());
+        QVERIFY2(image.save(output), qPrintable(output));
     }
 
     void remoteEntryBecomesInstallable()

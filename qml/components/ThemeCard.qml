@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 
 Item {
     id: root
@@ -8,8 +9,8 @@ Item {
     required property bool selected
     signal activated()
 
-    implicitWidth: 272
-    implicitHeight: 236
+    implicitWidth: 280
+    implicitHeight: 248
 
     function hex(key, fallback) {
         if (!root.item || !root.item.palette)
@@ -31,6 +32,8 @@ Item {
             return "KDE Store";
         if (source === "github")
             return "GitHub";
+        if (source === "gitlab")
+            return "GitLab";
         if (source === "local")
             return "Local";
         if (source === "wallpaper")
@@ -40,10 +43,12 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 18
-        color: root.item && root.item.palette ? root.hex("surfaceContainer", "#1d1722") : "#1d1722"
+        radius: 12
+        color: root.hex("surfaceContainerLow", root.hex("surfaceContainer", "#16131a"))
         border.width: 1
-        border.color: root.selected ? "#cfbcff" : (hover.hovered ? "#4a4054" : "#2b2632")
+        border.color: root.selected
+            ? root.hex("primary", "#cfbcff")
+            : (hover.hovered ? root.hex("outline", "#4a4054") : root.hex("outlineVariant", "#2b2632"))
         clip: true
 
         Rectangle {
@@ -52,13 +57,13 @@ Item {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 104
-            radius: 18
+            height: 108
+            radius: 12
 
             gradient: Gradient {
                 orientation: Gradient.Horizontal
                 GradientStop { position: 0.0; color: root.hex("background", "#161219") }
-                GradientStop { position: 0.58; color: root.hex("surfaceContainer", "#241d2b") }
+                GradientStop { position: 0.62; color: root.hex("surfaceContainer", "#241d2b") }
                 GradientStop { position: 1.0; color: root.hex("primary", "#8a7bb8") }
             }
 
@@ -90,25 +95,51 @@ Item {
 
                 Pill {
                     text: root.sourceLabel(root.item ? root.item.source : "")
-                    background: "#66120e18"
-                    foreground: "#eee7f2"
+                          + (root.item && root.item.mode ? "  ·  " + root.item.mode.charAt(0).toUpperCase() + root.item.mode.slice(1) : "")
+                    background: "#8c0e0b13"
+                    foreground: "#e8e2ee"
                 }
 
                 Rectangle {
                     Layout.preferredWidth: 6
                     Layout.preferredHeight: 6
                     radius: 3
-                    color: root.item && root.item.installable === false ? "#d8b26a" : "#8fd6a0"
+                    color: root.item && root.item.installable === false
+                        ? root.hex("tertiary", "#d8b26a") : root.hex("term2", "#8fd6a0")
                 }
 
                 Item { Layout.fillWidth: true }
 
-                Text {
+                RowLayout {
+                    spacing: 3
                     visible: root.item && root.item.stars > 0
-                    text: "★ " + (root.item ? root.item.stars : 0)
-                    color: "#f3e7c8"
-                    font.pixelSize: 10
-                    font.weight: Font.DemiBold
+
+                    AppIcon {
+                        iconSize: 10
+                        Layout.preferredWidth: 10
+                        Layout.preferredHeight: 10
+                        source: "qrc:/data/icons/star.svg"
+                        color: "#f3e7c8"
+                    }
+
+                    Text {
+                        text: root.item && root.item.stars !== undefined ? root.item.stars : 0
+                        color: "#f3e7c8"
+                        font.pixelSize: 10
+                        font.weight: Font.Medium
+                    }
+                }
+            }
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 54
+                gradient: Gradient {
+                    orientation: Gradient.Vertical
+                    GradientStop { position: 0.0; color: "#00000000" }
+                    GradientStop { position: 1.0; color: "#99000000" }
                 }
             }
 
@@ -119,8 +150,8 @@ Item {
                 anchors.margins: 12
                 text: root.item ? root.item.name : ""
                 color: "#ffffff"
-                font.pixelSize: 17
-                font.weight: Font.Bold
+                font.pixelSize: 16
+                font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
         }
@@ -131,14 +162,14 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             anchors.margins: 12
-            spacing: 5
+            spacing: 7
 
             Text {
                 Layout.fillWidth: true
                 text: root.item ? (root.item.description || "") : ""
                 color: root.hex("onSurfaceVariant", "#aaa0b3")
                 font.pixelSize: 11
-                lineHeight: 1.2
+                lineHeight: 1.25
                 maximumLineCount: 2
                 wrapMode: Text.WordWrap
                 elide: Text.ElideRight
@@ -151,13 +182,13 @@ Item {
                 spacing: 4
 
                 Repeater {
-                    model: ["primary", "secondary", "tertiary", "surface", "surfaceContainerHigh", "error"]
+                    model: ["primary", "secondary", "tertiary", "surfaceContainerHigh", "error"]
 
                     Rectangle {
                         visible: root.hasColors
-                        Layout.preferredWidth: 14
-                        Layout.preferredHeight: 14
-                        radius: 4
+                        Layout.preferredWidth: 13
+                        Layout.preferredHeight: 13
+                        radius: 6
                         color: root.hex(modelData, "#313039")
                         border.width: 1
                         border.color: "#33000000"
@@ -174,22 +205,7 @@ Item {
                 Item { Layout.fillWidth: true }
 
                 Text {
-                    text: root.item && root.item.targets ? (root.item.targets.length + " targets") : ""
-                    color: root.hex("outline", "#8b7f96")
-                    font.pixelSize: 9
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    text: root.item ? (root.item.mode || "") : ""
-                    color: root.hex("onSurfaceVariant", "#9b91a6")
-                    font.pixelSize: 10
-                    font.capitalization: Font.AllUppercase
-                    font.letterSpacing: 0.5
-                }
-
-                Text {
-                    text: root.item && root.item.needsInstall ? "Install" : (root.item && root.item.installable === false ? "Browse" : "Apply")
+                    text: root.item && root.item.needsInstall ? "Download" : (root.item && root.item.installable === false ? "View" : "Apply")
                     color: root.item && root.item.installable === false ? "#d8b26a" : root.hex("primary", "#cfbcff")
                     font.pixelSize: 10
                     font.weight: Font.DemiBold

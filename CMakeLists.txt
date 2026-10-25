@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(HyperThemes VERSION 0.1.0 LANGUAGES CXX)
+project(HyperThemes VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,6 +13,7 @@ qt_standard_project_setup()
 file(GLOB_RECURSE HT_QML_FILES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS qml/*.qml)
 file(GLOB HT_TEMPLATES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS templates/*)
 file(GLOB HT_CATALOG RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS catalog/*.json)
+file(GLOB HT_ICONS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} CONFIGURE_DEPENDS data/icons/*.svg)
 
 qt_add_executable(hyperthemes
     src/main.cpp
@@ -53,6 +54,7 @@ qt_add_resources(hyperthemes "hyperthemes-resources"
         ${HT_QML_FILES}
         ${HT_TEMPLATES}
         ${HT_CATALOG}
+        ${HT_ICONS}
         data/hyperthemes.svg
 )
 
@@ -142,6 +144,7 @@ if(BUILD_TESTING)
             ${HT_QML_FILES}
             ${HT_TEMPLATES}
             ${HT_CATALOG}
+            ${HT_ICONS}
             data/hyperthemes.svg
     )
 

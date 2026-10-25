@@ -8,7 +8,7 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 
 ## What works
 
-- **Catalog** — 390 bundled themes (Caelestia flavours plus the tinted-theming Base16 collection), local imports, KDE Store, and GitHub in one searchable gallery.
+- **Catalog** — 390 bundled themes (Caelestia flavours plus the tinted-theming Base16 collection), local imports, KDE Store, GitHub and GitLab in one searchable gallery.
 - **Picker** — live palette previews, readability badges, target filters (KDE, Quickshell, Waybar, GTK, terminals, apps), and keyboard selection.
 - **Remote installs** — download a KDE Store or GitHub archive, validate and extract it, discover its color scheme or Plasma package, and turn it into an applyable theme.
 - **Self-theming** — the app restyles its own surfaces, text, accents and controls from the selected palette. Toggle it in Settings if you prefer the default shell.
@@ -79,7 +79,7 @@ Imported themes live for the current session; the app does not modify the source
 
 ## Remote installs
 
-Remote cards keep the source page and also carry a download link. KDE Store entries use the OCS `downloadlink1`; GitHub entries use the repository's default-branch ZIP.
+Remote cards keep the source page and also carry a download link. KDE Store entries use the OCS `downloadlink1`; GitHub entries use the repository's default-branch ZIP; GitLab entries use the project archive URL.
 
 The downloader:
 
@@ -148,6 +148,8 @@ The generated files are small and readable:
 Placeholders use `{{role}}`, `{{role.rgb}}` and `{{role.stripped}}`. Add a template and a corresponding target in `src/applier.cpp` to extend the app.
 
 ## Layout presets
+
+The interface uses a small bundled SVG icon set, compact controls and the selected palette for its own surfaces, text, accents and controls. **Settings → Appearance** turns that self-theming off if you prefer the default dark shell.
 
 The **Layouts** page ships three Caelestia presets and three KDE Plasma presets:
 

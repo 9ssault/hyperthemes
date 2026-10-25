@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import Qt.labs.settings 1.1
+import QtCore
 import HyperThemes 1.0
 import "components"
 
@@ -47,6 +47,7 @@ ApplicationWindow {
     readonly property color appAccent: colors.accent
     readonly property color appBackground: colors.bg
     readonly property color appText: colors.text
+    readonly property var uiColors: colors
     property string search: ""
     property string page: "explore"
     property string statusText: "Ready"
@@ -137,6 +138,8 @@ ApplicationWindow {
             return "KDE Store";
         if (source === "github")
             return "GitHub";
+        if (source === "gitlab")
+            return "GitLab";
         if (source === "local")
             return "Local";
         if (source === "wallpaper")
@@ -176,7 +179,7 @@ ApplicationWindow {
         try {
             var document = JSON.parse(text);
             themes = document.themes || [];
-            statusText = themes.length + " bundled themes";
+            statusText = themes.length + " themes in the catalog";
         } catch (error) {
             statusText = "Could not parse the bundled catalog";
         }
@@ -573,6 +576,39 @@ ApplicationWindow {
         };
     }
 
+    function remoteThemeFromGitlab(item) {
+        var path = item.path_with_namespace || item.name || "GitLab theme";
+        var branch = item.default_branch || "main";
+        var archive = "https://gitlab.com/" + path + "/-/archive/" + encodeURIComponent(branch)
+            + "/" + encodeURIComponent(path.split("/").pop() + "-" + branch) + ".zip";
+        return {
+            id: "gitlab-" + (item.id || shortHash(path)),
+            name: path,
+            description: item.description || "A community theme or desktop customization repository.",
+            author: item.namespace && item.namespace.path ? item.namespace.path : "GitLab",
+            license: "See source",
+            source: "gitlab",
+            sourceUrl: item.web_url || "",
+            kind: "repository",
+            mode: "dark",
+            flavour: "default",
+            variant: "tonalspot",
+            wallpaper: "",
+            preview: "",
+            installPath: "",
+            targets: [],
+            palette: {},
+            remote: true,
+            installable: true,
+            needsInstall: true,
+            downloadUrl: archive,
+            downloadName: "theme.zip",
+            repo: path,
+            defaultBranch: branch,
+            stars: item.star_count || 0
+        };
+    }
+
     function getJson(url, callback) {
         var xhr = new XMLHttpRequest();
         xhr.onreadystatechange = function() {
@@ -621,7 +657,20 @@ ApplicationWindow {
             });
         });
 
-        ["quickshell theme", "waybar theme", "plasma theme", "base16 colorscheme", "catppuccin theme"].forEach(function(query) {
+        ++remotePending;
+        getJson("https://gitlab.com/api/v4/projects?search=" + encodeURIComponent("quickshell theme")
+                + "&per_page=8&order_by=star_count&sort=desc", function(data) {
+            if (data && data.length) {
+                var additions = [];
+                for (var i = 0; i < data.length; ++i)
+                    additions.push(remoteThemeFromGitlab(data[i]));
+                remoteThemes = remoteThemes.concat(additions);
+            }
+            finishRemote();
+        });
+
+        ["quickshell theme", "waybar theme", "plasma theme", "base16 colorscheme", "catppuccin theme",
+         "quickshell config", "kde plasma theme"].forEach(function(query) {
             ++remotePending;
             getJson("https://api.github.com/search/repositories?q=" + encodeURIComponent(query) + "&sort=stars&order=desc&per_page=12", function(data) {
                 if (!data || !data.items) {
@@ -907,7 +956,7 @@ ApplicationWindow {
         spacing: 0
 
         Rectangle {
-            Layout.preferredWidth: 228
+            Layout.preferredWidth: 232
             Layout.fillHeight: true
             color: colors.panel
 
@@ -921,23 +970,14 @@ ApplicationWindow {
                     Layout.bottomMargin: 18
                     spacing: 10
 
-                    Rectangle {
-                        Layout.preferredWidth: 34
-                        Layout.preferredHeight: 34
-                        radius: 11
-                        gradient: Gradient {
-                            orientation: Gradient.Horizontal
-                            GradientStop { position: 0.0; color: "#cfbcff" }
-                            GradientStop { position: 1.0; color: "#8ab4f8" }
-                        }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "✦"
-                            color: "#18121e"
-                            font.pixelSize: 18
-                            font.weight: Font.Bold
-                        }
+                    Image {
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
+                        source: "qrc:/data/hyperthemes.svg"
+                        sourceSize.width: 64
+                        sourceSize.height: 64
+                        smooth: true
+                        fillMode: Image.PreserveAspectFit
                     }
 
                     ColumnLayout {
@@ -952,7 +992,7 @@ ApplicationWindow {
                         }
 
                         Text {
-                            text: "themes, everywhere"
+                            text: "Desktop theme manager"
                             color: colors.faint
                             font.pixelSize: 10
                         }
@@ -961,7 +1001,7 @@ ApplicationWindow {
 
                 NavButton {
                     Layout.fillWidth: true
-                    icon: "◈"
+                    iconSource: "qrc:/data/icons/explore.svg"
                     label: "Explore"
                     active: root.page === "explore"
                     onClicked: root.page = "explore"
@@ -969,7 +1009,7 @@ ApplicationWindow {
 
                 NavButton {
                     Layout.fillWidth: true
-                    icon: "♡"
+                    iconSource: "qrc:/data/icons/heart.svg"
                     label: "My themes"
                     active: root.page === "mine"
                     onClicked: root.page = "mine"
@@ -977,7 +1017,7 @@ ApplicationWindow {
 
                 NavButton {
                     Layout.fillWidth: true
-                    icon: "✦"
+                    iconSource: "qrc:/data/icons/palette.svg"
                     label: "Dynamic"
                     active: root.page === "dynamic"
                     onClicked: root.page = "dynamic"
@@ -985,7 +1025,7 @@ ApplicationWindow {
 
                 NavButton {
                     Layout.fillWidth: true
-                    icon: "▤"
+                    iconSource: "qrc:/data/icons/layout.svg"
                     label: "Layouts"
                     active: root.page === "layouts"
                     onClicked: root.page = "layouts"
@@ -993,7 +1033,7 @@ ApplicationWindow {
 
                 NavButton {
                     Layout.fillWidth: true
-                    icon: "⚙"
+                    iconSource: "qrc:/data/icons/settings.svg"
                     label: "Settings"
                     active: root.page === "settings"
                     onClicked: root.page = "settings"
@@ -1012,7 +1052,7 @@ ApplicationWindow {
                     text: "SOURCES"
                     color: colors.faint
                     font.pixelSize: 9
-                    font.letterSpacing: 1.2
+                    font.letterSpacing: 0.5
                     font.weight: Font.DemiBold
                 }
 
@@ -1025,7 +1065,7 @@ ApplicationWindow {
 
                 Text {
                     Layout.fillWidth: true
-                    text: root.remoteThemes.length + " community"
+                    text: root.remoteThemes.length > 0 ? root.remoteThemes.length + " community" : "Community not loaded"
                     color: colors.muted
                     font.pixelSize: 11
                 }
@@ -1056,10 +1096,10 @@ ApplicationWindow {
 
                         Text {
                             text: "MATUGEN"
-                            color: colors.faint
+                            color: colors.muted
                             font.pixelSize: 9
-                            font.letterSpacing: 1.1
-                            font.weight: Font.DemiBold
+                    font.letterSpacing: 0.5
+                    font.weight: Font.DemiBold
                         }
 
                         Text {
@@ -1112,8 +1152,8 @@ ApplicationWindow {
                                             ? "My themes"
                                             : "Explore themes"
                             color: colors.text
-                            font.pixelSize: 26
-                            font.weight: Font.Bold
+                            font.pixelSize: 24
+                            font.weight: Font.DemiBold
                         }
 
                         Text {
@@ -1153,18 +1193,33 @@ ApplicationWindow {
 
                     TextField {
                         id: searchField
-                        Layout.preferredWidth: 250
+                        Layout.preferredWidth: 270
+                        Layout.preferredHeight: 32
+                        leftPadding: 32
                         placeholderText: "Search themes, authors, sources…"
                         text: root.search
                         font.pixelSize: 12
                         color: colors.text
+                        placeholderTextColor: colors.faint
                         selectByMouse: true
                         onTextChanged: {
                             root.search = text;
                             root.recompute();
                         }
+
+                        AppIcon {
+                            anchors.left: parent.left
+                            anchors.leftMargin: 11
+                            anchors.verticalCenter: parent.verticalCenter
+                            iconSize: 15
+                            width: 15
+                            height: 15
+                            source: "qrc:/data/icons/search.svg"
+                            color: searchField.activeFocus ? colors.accent : colors.faint
+                        }
+
                         background: Rectangle {
-                            radius: 9
+                            radius: 7
                             color: colors.panel2
                             border.width: 1
                             border.color: searchField.activeFocus ? colors.accent : colors.border
@@ -1174,6 +1229,7 @@ ApplicationWindow {
                     ComboBox {
                         Layout.preferredWidth: 150
                         model: root.sourceModel
+                        Layout.preferredHeight: 32
                         textRole: "label"
                         font.pixelSize: 12
                         currentIndex: {
@@ -1192,6 +1248,7 @@ ApplicationWindow {
                     ComboBox {
                         Layout.preferredWidth: 128
                         model: root.modeModel
+                        Layout.preferredHeight: 32
                         textRole: "label"
                         font.pixelSize: 12
                         currentIndex: root.modeFilter === "light" ? 2 : root.modeFilter === "dark" ? 1 : 0
@@ -1204,6 +1261,7 @@ ApplicationWindow {
                     ComboBox {
                         Layout.preferredWidth: 112
                         model: root.sortModel
+                        Layout.preferredHeight: 32
                         font.pixelSize: 12
                         currentIndex: Math.max(0, root.sortModel.indexOf(root.sortMode))
                         onActivated: function(index) {
@@ -1283,8 +1341,8 @@ ApplicationWindow {
                             id: grid
                             anchors.fill: parent
                             clip: true
-                            cellWidth: 284
-                            cellHeight: 252
+                            cellWidth: 292
+                            cellHeight: 264
                             leftMargin: 2
                             topMargin: 2
                             rightMargin: 2
@@ -1307,8 +1365,8 @@ ApplicationWindow {
                             delegate: ThemeCard {
                                 required property var modelData
 
-                                width: 272
-                                height: 236
+                                width: 280
+                                height: 248
                                 item: modelData
                                 selected: root.selected && root.selected.id === modelData.id
                                 onActivated: root.selectTheme(modelData)
@@ -1321,11 +1379,13 @@ ApplicationWindow {
                             spacing: 8
                             visible: root.filtered.length === 0 && !root.remoteLoading
 
-                            Text {
+                            AppIcon {
                                 Layout.alignment: Qt.AlignHCenter
-                                text: "◌"
+                                iconSize: 32
+                                Layout.preferredWidth: 32
+                                Layout.preferredHeight: 32
+                                source: "qrc:/data/icons/search.svg"
                                 color: colors.faint
-                                font.pixelSize: 36
                             }
 
                             Text {
@@ -1359,7 +1419,7 @@ ApplicationWindow {
                                 Rectangle {
                                     Layout.preferredWidth: 360
                                     Layout.preferredHeight: 220
-                                    radius: 16
+                                    radius: 12
                                     color: colors.panel2
                                     border.width: 1
                                     border.color: colors.border
@@ -1390,10 +1450,10 @@ ApplicationWindow {
 
                                     Text {
                                         text: "WALLPAPER"
-                                        color: colors.faint
+                                        color: colors.muted
                                         font.pixelSize: 9
-                                        font.letterSpacing: 1.1
-                                        font.weight: Font.DemiBold
+                            font.letterSpacing: 0.5
+                            font.weight: Font.DemiBold
                                     }
 
                                     Text {
@@ -1442,7 +1502,7 @@ ApplicationWindow {
                             Rectangle {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                radius: 16
+                                radius: 12
                                 color: colors.panel
                                 border.width: 1
                                 border.color: colors.border
@@ -1454,10 +1514,10 @@ ApplicationWindow {
 
                                     Text {
                                         text: "PALETTE OPTIONS"
-                                        color: colors.faint
+                                        color: colors.muted
                                         font.pixelSize: 9
-                                        font.letterSpacing: 1.1
-                                        font.weight: Font.DemiBold
+                            font.letterSpacing: 0.5
+                            font.weight: Font.DemiBold
                                     }
 
                                     RowLayout {
@@ -1477,6 +1537,7 @@ ApplicationWindow {
                                             ComboBox {
                                                 Layout.fillWidth: true
                                                 model: ["Dark", "Light"]
+                                                Layout.preferredHeight: 32
                                                 onActivated: function(index) {
                                                     root.dynamicMode = index === 0 ? "dark" : "light";
                                                 }
@@ -1496,6 +1557,7 @@ ApplicationWindow {
                                             ComboBox {
                                                 Layout.fillWidth: true
                                                 model: ["Tonal spot", "Vibrant", "Expressive", "Content", "Fidelity", "Monochrome", "Neutral", "Rainbow", "Fruit salad", "Smart"]
+                                                Layout.preferredHeight: 32
                                                 onActivated: function(index) {
                                                     var values = ["scheme-tonal-spot", "scheme-vibrant", "scheme-expressive", "scheme-content", "scheme-fidelity", "scheme-monochrome", "scheme-neutral", "scheme-rainbow", "scheme-fruit-salad", "scheme-smart"];
                                                     root.dynamicScheme = values[index];
@@ -1574,8 +1636,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    radius: 14
-                                    color: colors.panel
+                            radius: 10
+                            color: colors.panel
                                     border.width: 1
                                     border.color: colors.border
                                     implicitHeight: layoutIntro.implicitHeight + 30
@@ -1588,10 +1650,10 @@ ApplicationWindow {
 
                                         Text {
                                             text: "PANEL LAYOUTS"
-                                            color: colors.faint
+                                            color: colors.muted
                                             font.pixelSize: 9
-                                            font.letterSpacing: 1.1
-                                            font.weight: Font.DemiBold
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
                                         }
 
                                         Text {
@@ -1611,8 +1673,8 @@ ApplicationWindow {
                                         required property var modelData
 
                                         Layout.fillWidth: true
-                                        radius: 14
-                                        color: colors.panel
+                                    radius: 10
+                                    color: colors.panel
                                         border.width: 1
                                         border.color: colors.border
                                         implicitHeight: layoutCard.implicitHeight + 30
@@ -1699,8 +1761,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    radius: 14
-                                    color: colors.panel
+                            radius: 10
+                            color: colors.panel
                                     border.width: 1
                                     border.color: colors.border
                                     implicitHeight: layoutBackupColumn.implicitHeight + 30
@@ -1716,9 +1778,9 @@ ApplicationWindow {
 
                                             Text {
                                                 text: "LAYOUT BACKUPS"
-                                                color: colors.faint
+                                                color: colors.muted
                                                 font.pixelSize: 9
-                                                font.letterSpacing: 1.1
+                                                font.letterSpacing: 0.5
                                                 font.weight: Font.DemiBold
                                             }
 
@@ -1781,8 +1843,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    radius: 14
-                                    color: colors.panel
+                            radius: 10
+                            color: colors.panel
                                     border.width: 1
                                     border.color: colors.border
                                     implicitHeight: sourceColumn.implicitHeight + 30
@@ -1795,10 +1857,10 @@ ApplicationWindow {
 
                                         Text {
                                             text: "SOURCES"
-                                            color: colors.faint
+                                            color: colors.muted
                                             font.pixelSize: 9
-                                            font.letterSpacing: 1.1
-                                            font.weight: Font.DemiBold
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
                                         }
 
                                         Text {
@@ -1834,8 +1896,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    radius: 14
-                                    color: colors.panel
+                            radius: 10
+                            color: colors.panel
                                     border.width: 1
                                     border.color: colors.border
                                     implicitHeight: appearanceColumn.implicitHeight + 30
@@ -1848,10 +1910,10 @@ ApplicationWindow {
 
                                         Text {
                                             text: "APPEARANCE"
-                                            color: colors.faint
+                                            color: colors.muted
                                             font.pixelSize: 9
-                                            font.letterSpacing: 1.1
-                                            font.weight: Font.DemiBold
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
                                         }
 
                                         RowLayout {
@@ -1878,7 +1940,8 @@ ApplicationWindow {
                                                 }
                                             }
 
-                                            Switch {
+                                            ThemeSwitch {
+                                                text: ""
                                                 checked: root.followPalette
                                                 onToggled: root.followPalette = checked
                                             }
@@ -1894,8 +1957,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    radius: 14
-                                    color: colors.panel
+                            radius: 10
+                            color: colors.panel
                                     border.width: 1
                                     border.color: colors.border
                                     implicitHeight: backupColumn.implicitHeight + 30
@@ -1911,9 +1974,9 @@ ApplicationWindow {
 
                                             Text {
                                                 text: "BACKUPS"
-                                                color: colors.faint
+                                                color: colors.muted
                                                 font.pixelSize: 9
-                                                font.letterSpacing: 1.1
+                                                font.letterSpacing: 0.5
                                                 font.weight: Font.DemiBold
                                             }
 
@@ -1967,8 +2030,8 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    radius: 14
-                                    color: colors.panel
+                            radius: 10
+                            color: colors.panel
                                     border.width: 1
                                     border.color: colors.border
                                     implicitHeight: runtimeColumn.implicitHeight + 30
@@ -1981,10 +2044,10 @@ ApplicationWindow {
 
                                         Text {
                                             text: "RUNTIME"
-                                            color: colors.faint
+                                            color: colors.muted
                                             font.pixelSize: 9
-                                            font.letterSpacing: 1.1
-                                            font.weight: Font.DemiBold
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
                                         }
 
                                         Text {
@@ -2013,7 +2076,7 @@ ApplicationWindow {
                 Rectangle {
                     Layout.fillWidth: true
                     height: 32
-                    radius: 9
+                    radius: 7
                     color: colors.panel
 
                     Text {
@@ -2057,7 +2120,7 @@ ApplicationWindow {
 
                     Text {
                         text: "INSPECTOR"
-                        color: colors.faint
+                        color: colors.muted
                         font.pixelSize: 9
                         font.letterSpacing: 1.2
                         font.weight: Font.DemiBold
@@ -2145,10 +2208,10 @@ ApplicationWindow {
 
                         Text {
                             text: "PALETTE"
-                            color: colors.faint
+                            color: colors.muted
                             font.pixelSize: 9
-                            font.letterSpacing: 1.1
-                            font.weight: Font.DemiBold
+                    font.letterSpacing: 0.5
+                    font.weight: Font.DemiBold
                         }
 
                         Text {
@@ -2172,9 +2235,9 @@ ApplicationWindow {
 
                                 Rectangle {
                                     id: swatch
-                                    Layout.preferredWidth: 42
-                                    Layout.preferredHeight: 30
-                                    radius: 7
+                                    Layout.preferredWidth: 44
+                                    Layout.preferredHeight: 34
+                                    radius: 6
                                     color: root.selected ? root.colorFrom(root.selected, modelData, "#333039") : "#333039"
                                     border.width: 1
                                     border.color: "#22000000"
@@ -2183,19 +2246,8 @@ ApplicationWindow {
 
                                     ToolTip {
                                         visible: swatchHover.hovered
-                                        text: modelData + " #" + String(root.colorFrom(root.selected, modelData, "000000")).replace("#", "")
+                                        text: modelData + "  #" + String(root.colorFrom(root.selected, modelData, "000000")).replace("#", "")
                                         delay: 150
-                                    }
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: modelData
-                                        color: root.contrast(root.colorFrom(root.selected, modelData, "#000000"), "#ffffff") > 3
-                                               ? "#dd000000" : "#ddffffff"
-                                        font.pixelSize: 7
-                                        elide: Text.ElideRight
-                                        width: parent.width - 4
-                                        horizontalAlignment: Text.AlignHCenter
                                     }
                                 }
                             }
@@ -2241,32 +2293,30 @@ ApplicationWindow {
 
                         Text {
                             text: "TARGETS"
-                            color: colors.faint
+                            color: colors.muted
                             font.pixelSize: 9
-                            font.letterSpacing: 1.1
-                            font.weight: Font.DemiBold
+                    font.letterSpacing: 0.5
+                    font.weight: Font.DemiBold
                         }
 
                         Repeater {
                             model: root.targetOptions
 
-                            CheckBox {
+                            ThemeCheckBox {
                                 id: targetBox
                                 Layout.fillWidth: true
                                 property string themeId: root.selected ? root.selected.id : ""
                                 text: modelData.label
                                 checked: root.targetEnabled[modelData.key] !== false
-                                font.pixelSize: 11
                                 onToggled: root.setTarget(modelData.key, checked)
                                 onThemeIdChanged: checked = root.targetEnabled[modelData.key] !== false
                             }
                         }
 
-                        Switch {
+                        ThemeSwitch {
                             Layout.fillWidth: true
                             text: "System-wide (KDE scheme only)"
                             checked: root.systemWide
-                            font.pixelSize: 11
                             onToggled: root.systemWide = checked
                         }
 
@@ -2374,11 +2424,13 @@ ApplicationWindow {
 
                         Item { Layout.preferredHeight: 40 }
 
-                        Text {
+                        AppIcon {
                             Layout.alignment: Qt.AlignHCenter
-                            text: "◇"
+                            iconSize: 36
+                            Layout.preferredWidth: 36
+                            Layout.preferredHeight: 36
+                            source: "qrc:/data/icons/palette.svg"
                             color: colors.faint
-                            font.pixelSize: 42
                         }
 
                         Text {

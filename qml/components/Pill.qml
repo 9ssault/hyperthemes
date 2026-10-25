@@ -8,8 +8,8 @@ Rectangle {
     property color foreground: "#d8d0df"
 
     implicitWidth: label.implicitWidth + 16
-    implicitHeight: 22
-    radius: 11
+    implicitHeight: 21
+    radius: 10
     color: root.background
 
     Text {
@@ -19,8 +19,6 @@ Rectangle {
         text: root.text
         color: root.foreground
         font.pixelSize: 10
-        font.weight: Font.DemiBold
-        font.letterSpacing: 0.6
-        font.capitalization: Font.AllUppercase
+        font.weight: Font.Medium
     }
 }

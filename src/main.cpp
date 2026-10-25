@@ -14,7 +14,7 @@ int main(int argc, char *argv[])
 {
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("HyperThemes"));
-    QGuiApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QGuiApplication::setApplicationVersion(QStringLiteral("0.2.0"));
     QGuiApplication::setOrganizationName(QStringLiteral("HyperThemes"));
     QGuiApplication::setDesktopFileName(QStringLiteral("hyperthemes"));
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/data/hyperthemes.svg")));

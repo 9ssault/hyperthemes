@@ -33,7 +33,10 @@ private:
     void finishDownload();
     void processDownload();
     void collectFiles(const QString &root, const QString &stableRoot);
+    QVariantMap findPackage(const QString &root) const;
+    bool installPackage(const QString &root, const QVariantMap &metadata, QVariantMap *package, QString *error) const;
     void finishWithFiles(const QStringList &files);
+    void finishWithPackage(const QVariantMap &package);
     void fail(const QString &message);
     void setBusy(bool busy);
     void setStatus(const QString &status);
@@ -46,6 +49,7 @@ private:
     QString m_name;
     QString m_root;
     QString m_archive;
+    QString m_warning;
     bool m_busy = false;
     bool m_finished = false;
     QString m_status;

@@ -114,6 +114,24 @@ private slots:
         QVERIFY(TemplateRenderer::render(QStringLiteral("kitty.conf"), theme).contains(QStringLiteral("color0 #")));
     }
 
+    void themeMapKeepsPackageFields()
+    {
+        QVariantMap map = sampleTheme();
+        map.insert(QStringLiteral("palette"), QVariantMap{});
+        map.insert(QStringLiteral("packageId"), QStringLiteral("org.kde.test.lookandfeel"));
+        map.insert(QStringLiteral("packageStructure"), QStringLiteral("Plasma/LookAndFeel"));
+        map.insert(QStringLiteral("packageName"), QStringLiteral("Test Look"));
+
+        const Theme theme = Theme::fromMap(map);
+        QCOMPARE(theme.packageId, QStringLiteral("org.kde.test.lookandfeel"));
+        QCOMPARE(theme.packageStructure, QStringLiteral("Plasma/LookAndFeel"));
+
+        const QVariantMap roundTrip = theme.toMap();
+        QCOMPARE(roundTrip.value(QStringLiteral("packageId")).toString(), theme.packageId);
+        QCOMPARE(roundTrip.value(QStringLiteral("packageStructure")).toString(), theme.packageStructure);
+        QCOMPARE(roundTrip.value(QStringLiteral("packageName")).toString(), theme.packageName);
+    }
+
     void applyAndRollbackUserTargets()
     {
         const QString config = Paths::configHome();

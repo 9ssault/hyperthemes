@@ -58,6 +58,7 @@ private:
 
     void applyWallpaper(Session &session, const Theme &theme);
     void applyKde(Session &session, const Theme &theme, bool systemWide);
+    void applyKdePackage(Session &session, const Theme &theme);
     void applyCaelestia(Session &session, const Theme &theme);
     void applyWaybar(Session &session, const Theme &theme);
     void applyGtk(Session &session, const Theme &theme);

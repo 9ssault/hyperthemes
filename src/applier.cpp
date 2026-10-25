@@ -279,8 +279,61 @@ void Applier::applyWallpaper(Session &session, const Theme &theme)
     session.warnings << QStringLiteral("No wallpaper backend found; set it manually: %1").arg(theme.wallpaper);
 }
 
+void Applier::applyKdePackage(Session &session, const Theme &theme)
+{
+    if (theme.packageId.isEmpty()) {
+        session.warnings << QStringLiteral("The KDE package has no plugin id");
+        return;
+    }
+
+    const QStringList configs = {
+        QStringLiteral("kdeglobals"),
+        QStringLiteral("plasmarc"),
+        QStringLiteral("ksplashrc"),
+        QStringLiteral("kwinrc"),
+        QStringLiteral("plasma-org.kde.plasma.desktop-appletsrc"),
+    };
+    for (const QString &name : configs)
+        backupFile(session, Paths::configHome() + QLatin1Char('/') + name, false);
+
+    QString program;
+    QStringList arguments;
+    if (theme.packageStructure == QLatin1String("Plasma/LookAndFeel")) {
+        program = QStringLiteral("plasma-apply-lookandfeel");
+        arguments = {theme.packageId};
+    } else if (theme.packageStructure == QLatin1String("Plasma/DesktopTheme")) {
+        program = QStringLiteral("plasma-apply-desktoptheme");
+        arguments = {theme.packageId};
+    } else if (theme.packageStructure == QLatin1String("Plasma/ColorScheme")) {
+        program = QStringLiteral("plasma-apply-colorscheme");
+        arguments = {theme.packageName.isEmpty() ? theme.packageId : theme.packageName};
+    } else {
+        session.warnings << QStringLiteral("The KDE package was installed, but %1 has no automatic apply step").arg(theme.packageStructure);
+        return;
+    }
+
+    if (QStandardPaths::findExecutable(program).isEmpty()) {
+        session.warnings << QStringLiteral("The KDE package is installed; %1 is missing, so apply it from System Settings").arg(program);
+        return;
+    }
+
+    QString output;
+    if (!run(program, arguments, 120000, &output)) {
+        session.warnings << QStringLiteral("The KDE package could not be applied: %1").arg(output.trimmed());
+        return;
+    }
+
+    session.applied << QStringLiteral("KDE package: %1").arg(theme.packageName.isEmpty() ? theme.packageId : theme.packageName);
+    session.warnings << QStringLiteral("Rollback restores KDE settings, but leaves the installed package in your user package folder");
+}
+
 void Applier::applyKde(Session &session, const Theme &theme, bool systemWide)
 {
+    if (!theme.packageId.isEmpty()) {
+        applyKdePackage(session, theme);
+        return;
+    }
+
     const QString content = makeKde(theme);
     if (content.isEmpty()) {
         session.warnings << QStringLiteral("KDE color scheme template produced nothing");
@@ -515,7 +568,7 @@ void Applier::applyVesktop(Session &session, const Theme &theme)
 QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targets, bool systemWide)
 {
     Theme theme = Theme::fromMap(themeMap);
-    if (theme.id.isEmpty() || theme.palette.isEmpty())
+    if (theme.id.isEmpty() || (theme.palette.isEmpty() && theme.packageId.isEmpty()))
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("No theme palette was supplied")}};
     if (!theme.installable)
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("This source is browse-only; open the source page to install it")}};

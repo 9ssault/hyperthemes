@@ -166,6 +166,32 @@ private slots:
         QCOMPARE(selected.value(QStringLiteral("palette")).toMap().value(QStringLiteral("primary")).toString(), QStringLiteral("ff0000"));
     }
 
+    void remotePackageBecomesApplyable()
+    {
+        const QVariantMap target = {
+            {QStringLiteral("id"), QStringLiteral("kde-777")},
+            {QStringLiteral("name"), QStringLiteral("Breeze Test")},
+            {QStringLiteral("source"), QStringLiteral("kde-store")},
+            {QStringLiteral("needsInstall"), true},
+        };
+        m_root->setProperty("remoteInstallTarget", target);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "handleRemoteInstalled", Q_ARG(QVariant, QVariant(QVariantMap{
+            {QStringLiteral("ok"), true},
+            {QStringLiteral("package"), QVariantMap{
+                 {QStringLiteral("id"), QStringLiteral("org.kde.test.lookandfeel")},
+                 {QStringLiteral("structure"), QStringLiteral("Plasma/LookAndFeel")},
+                 {QStringLiteral("name"), QStringLiteral("Test Look")},
+             }},
+        }))));
+
+        const QVariantMap selected = m_root->property("selected").toMap();
+        QCOMPARE(selected.value(QStringLiteral("packageId")).toString(), QStringLiteral("org.kde.test.lookandfeel"));
+        QCOMPARE(selected.value(QStringLiteral("packageStructure")).toString(), QStringLiteral("Plasma/LookAndFeel"));
+        QCOMPARE(selected.value(QStringLiteral("needsInstall")).toBool(), false);
+        QCOMPARE(selected.value(QStringLiteral("targets")).toStringList(), QStringList{QStringLiteral("kde")});
+        QCOMPARE(selected.value(QStringLiteral("name")).toString(), QStringLiteral("Breeze Test"));
+    }
+
 private:
     QTemporaryDir m_temp;
     Applier m_applier;

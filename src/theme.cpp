@@ -17,6 +17,9 @@ QVariantMap Theme::toMap() const
         {QStringLiteral("wallpaper"), wallpaper},
         {QStringLiteral("preview"), preview},
         {QStringLiteral("installPath"), installPath},
+        {QStringLiteral("packageId"), packageId},
+        {QStringLiteral("packageStructure"), packageStructure},
+        {QStringLiteral("packageName"), packageName},
         {QStringLiteral("targets"), targets},
         {QStringLiteral("palette"), palette},
         {QStringLiteral("remote"), remote},
@@ -42,6 +45,9 @@ Theme Theme::fromMap(const QVariantMap &map)
     theme.wallpaper = map.value(QStringLiteral("wallpaper")).toString();
     theme.preview = map.value(QStringLiteral("preview")).toString();
     theme.installPath = map.value(QStringLiteral("installPath")).toString();
+    theme.packageId = map.value(QStringLiteral("packageId")).toString();
+    theme.packageStructure = map.value(QStringLiteral("packageStructure")).toString();
+    theme.packageName = map.value(QStringLiteral("packageName")).toString();
     theme.targets = map.value(QStringLiteral("targets")).toStringList();
     theme.palette = map.value(QStringLiteral("palette")).toMap();
     theme.remote = map.value(QStringLiteral("remote")).toBool();

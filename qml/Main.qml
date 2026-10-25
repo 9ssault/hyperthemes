@@ -674,6 +674,42 @@ ApplicationWindow {
         }
 
         var target = root.remoteInstallTarget || selected;
+        var packageInfo = result.package || {};
+        if (packageInfo.id) {
+            var structure = packageInfo.structure || "";
+            var packageTargets = structure === "Plasma/ColorScheme" ? ["kde", "konsole"] : ["kde"];
+            var installedPackage = {
+                id: target ? target.id : ("package-" + packageInfo.id),
+                name: target ? target.name : (packageInfo.name || packageInfo.id),
+                description: target ? target.description : "Installed KDE package (" + structure + ")",
+                author: target ? target.author : "",
+                license: target ? target.license : "",
+                source: target ? target.source : "local",
+                sourceUrl: target ? target.sourceUrl : "",
+                kind: target ? target.kind : "remote",
+                mode: "dark",
+                flavour: "default",
+                variant: "tonalspot",
+                wallpaper: "",
+                preview: target ? target.preview : "",
+                installPath: "",
+                packageId: packageInfo.id,
+                packageStructure: structure,
+                packageName: packageInfo.name || "",
+                targets: packageTargets,
+                palette: {},
+                remote: true,
+                installable: true,
+                needsInstall: false,
+                installed: true,
+                stars: target ? target.stars : 0
+            };
+            root.remoteInstallTarget = null;
+            selectTheme(installedPackage);
+            notify("Installed " + installedPackage.name + ". Apply it to switch Plasma over.");
+            return;
+        }
+
         var files = result.files || [];
         for (var i = 0; i < files.length; ++i) {
             var parsed = parseLocalTheme(files[i]);

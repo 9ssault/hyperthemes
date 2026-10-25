@@ -19,6 +19,9 @@ struct Theme {
     QString wallpaper;
     QString preview;
     QString installPath;
+    QString packageId;
+    QString packageStructure;
+    QString packageName;
     QStringList targets;
     QVariantMap palette;
     bool remote = false;

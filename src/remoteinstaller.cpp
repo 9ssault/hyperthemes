@@ -3,6 +3,8 @@
 #include "paths.h"
 
 #include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
@@ -104,6 +106,7 @@ void RemoteInstaller::install(const QVariantMap &theme)
     m_root = Paths::cacheDir() + QStringLiteral("/remote/") + m_id;
     m_archive = m_root + QStringLiteral("/download");
     m_finished = false;
+    m_warning.clear();
 
     QDir(m_root).removeRecursively();
     if (!QDir().mkpath(m_root)) {
@@ -288,6 +291,17 @@ void RemoteInstaller::processDownload()
         return;
     }
 
+    const QVariantMap package = findPackage(unpacked);
+    if (!package.isEmpty()) {
+        QVariantMap installed;
+        QString error;
+        if (installPackage(package.value(QStringLiteral("root")).toString(), package, &installed, &error)) {
+            finishWithPackage(installed);
+            return;
+        }
+        m_warning = error;
+    }
+
     collectFiles(unpacked, Paths::themesDir() + QLatin1Char('/') + m_id);
 }
 
@@ -311,7 +325,9 @@ void RemoteInstaller::collectFiles(const QString &root, const QString &stableRoo
     }
 
     if (found.isEmpty()) {
-        fail(QStringLiteral("No supported palette file was found in the archive."));
+        const QString base = m_warning.isEmpty() ? QStringLiteral("No supported palette file was found in the archive.")
+                                                 : m_warning + QStringLiteral(" No supported palette file was found either.");
+        fail(base);
         return;
     }
 
@@ -342,6 +358,84 @@ void RemoteInstaller::collectFiles(const QString &root, const QString &stableRoo
     }
 
     finishWithFiles(installed);
+}
+
+QVariantMap RemoteInstaller::findPackage(const QString &root) const
+{
+    QDirIterator it(root, {QStringLiteral("metadata.json")}, QDir::Files, QDirIterator::Subdirectories);
+    int inspected = 0;
+    while (it.hasNext() && inspected < 40) {
+        ++inspected;
+        const QString path = it.next();
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly))
+            continue;
+        const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+        if (!document.isObject())
+            continue;
+        const QJsonObject object = document.object();
+        const QString structure = object.value(QStringLiteral("KPackageStructure")).toString();
+        const QJsonObject plugin = object.value(QStringLiteral("KPlugin")).toObject();
+        const QString id = plugin.value(QStringLiteral("Id")).toString();
+        if (!structure.startsWith(QLatin1String("Plasma/")) || id.isEmpty())
+            continue;
+        return {
+            {QStringLiteral("root"), QFileInfo(path).absolutePath()},
+            {QStringLiteral("id"), id},
+            {QStringLiteral("structure"), structure},
+            {QStringLiteral("name"), plugin.value(QStringLiteral("Name")).toString()},
+            {QStringLiteral("version"), plugin.value(QStringLiteral("Version")).toString()},
+        };
+    }
+    return {};
+}
+
+bool RemoteInstaller::installPackage(const QString &root, const QVariantMap &metadata, QVariantMap *package, QString *error) const
+{
+    const QString tool = QStandardPaths::findExecutable(QStringLiteral("kpackagetool6"));
+    if (tool.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("This is a KDE package, but kpackagetool6 is not installed.");
+        return false;
+    }
+
+    QString output;
+    if (!runTool(tool, {QStringLiteral("--install"), root}, &output, 120000)) {
+        output.clear();
+        if (!runTool(tool, {QStringLiteral("--upgrade"), root}, &output, 120000)) {
+            if (error)
+                *error = output.trimmed().isEmpty() ? QStringLiteral("The KDE package could not be installed.") : output.trimmed();
+            return false;
+        }
+    }
+
+    if (package) {
+        *package = metadata;
+        package->remove(QStringLiteral("root"));
+    }
+    return true;
+}
+
+void RemoteInstaller::finishWithPackage(const QVariantMap &package)
+{
+    m_finished = true;
+    if (m_file) {
+        m_file->close();
+        m_file->deleteLater();
+        m_file = nullptr;
+    }
+    setBusy(false);
+    setStatus(QStringLiteral("Installed KDE package %1").arg(package.value(QStringLiteral("name")).toString()));
+    QDir(m_root).removeRecursively();
+
+    QVariantMap clean = package;
+    clean.remove(QStringLiteral("root"));
+    emit finished({
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("name"), m_name},
+        {QStringLiteral("id"), m_id},
+        {QStringLiteral("package"), clean},
+    });
 }
 
 void RemoteInstaller::finishWithFiles(const QStringList &files)

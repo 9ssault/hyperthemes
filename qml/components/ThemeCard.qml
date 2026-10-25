@@ -23,6 +23,32 @@ Item {
 
     readonly property bool hasColors: !!item && !!item.palette && Object.keys(item.palette).length > 0
 
+    function channel(value) {
+        var c = value / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+
+    function luminance(value) {
+        var hexValue = String(value).replace("#", "");
+        if (hexValue.length !== 6)
+            return 0;
+        return 0.2126 * channel(parseInt(hexValue.substring(0, 2), 16))
+             + 0.7152 * channel(parseInt(hexValue.substring(2, 4), 16))
+             + 0.0722 * channel(parseInt(hexValue.substring(4, 6), 16));
+    }
+
+    function contrast(a, b) {
+        var la = luminance(a);
+        var lb = luminance(b);
+        return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+    }
+
+    function readable(key, fallback) {
+        var candidate = root.hex(key, fallback);
+        var background = root.hex("surfaceContainerLow", root.hex("surfaceContainer", "#16131a"));
+        return contrast(candidate, background) >= 4.5 ? candidate : root.hex("onSurface", "#d8d2df");
+    }
+
     function sourceLabel(source) {
         if (source === "bundled")
             return "Bundled";
@@ -167,7 +193,7 @@ Item {
             Text {
                 Layout.fillWidth: true
                 text: root.item ? (root.item.description || "") : ""
-                color: root.hex("onSurfaceVariant", "#aaa0b3")
+                color: root.readable("onSurfaceVariant", "#aaa0b3")
                 font.pixelSize: 11
                 lineHeight: 1.25
                 maximumLineCount: 2

@@ -180,6 +180,7 @@ ApplicationWindow {
             var document = JSON.parse(text);
             themes = document.themes || [];
             statusText = themes.length + " themes in the catalog";
+            restoreLastTheme();
         } catch (error) {
             statusText = "Could not parse the bundled catalog";
         }
@@ -234,10 +235,23 @@ ApplicationWindow {
         sourceModel = model;
     }
 
+    function restoreLastTheme() {
+        if (!prefs.lastThemeId)
+            return;
+        for (var i = 0; i < themes.length; ++i) {
+            if (themes[i].id === prefs.lastThemeId) {
+                selectTheme(themes[i]);
+                return;
+            }
+        }
+    }
+
     function selectTheme(item) {
         if (!item)
             return;
         selected = item;
+        if (item.source === "bundled" || item.source === "base16")
+            prefs.lastThemeId = item.id;
         applyWarnings = [];
         applyError = "";
         remoteInstallError = "";
@@ -900,22 +914,33 @@ ApplicationWindow {
         }
     }
 
+    SystemPalette {
+        id: systemColors
+        colorGroup: SystemPalette.Active
+    }
+
     QtObject {
         id: colors
 
-        property color bg: root.paletteColor("background", "#0d0a10")
-        property color panel: root.paletteColor("surfaceContainerLow", root.paletteColor("surfaceContainer", "#121016"))
-        property color panel2: root.paletteColor("surfaceContainer", "#19151e")
-        property color elevated: root.paletteColor("surfaceContainerHigh", "#211b28")
-        property color border: root.paletteColor("outlineVariant", "#2e2735")
-        property color text: root.paletteColor("onSurface", root.paletteColor("onBackground", "#f2ecf5"))
-        property color muted: root.paletteColor("onSurfaceVariant", "#a79caf")
-        property color faint: root.paletteColor("outline", "#746a7d")
-        property color accent: root.paletteColor("primary", "#cfbcff")
-        property color accent2: root.paletteColor("secondary", "#8ab4f8")
-        property color danger: root.paletteColor("error", "#ffb4ab")
-        property color success: root.paletteColor("term2", root.paletteColor("tertiary", "#8fd6a0"))
-        property color onAccent: root.paletteColor("onPrimary", "#18121e")
+        property color bg: root.paletteColor("background", systemColors.window)
+        property color panel: root.paletteColor("surfaceContainerLow",
+                                                root.paletteColor("surfaceContainer", systemColors.alternateBase))
+        property color panel2: root.paletteColor("surfaceContainer", systemColors.base)
+        property color elevated: root.paletteColor("surfaceContainerHigh", systemColors.button)
+        property color border: root.paletteColor("outlineVariant", systemColors.mid)
+        property color text: root.paletteColor("onSurface",
+                                               root.paletteColor("onBackground", systemColors.windowText))
+        property color muted: root.paletteColor("onSurfaceVariant",
+                                                Qt.rgba(systemColors.windowText.r, systemColors.windowText.g,
+                                                        systemColors.windowText.b, 0.74))
+        property color faint: root.paletteColor("outline",
+                                                Qt.rgba(systemColors.windowText.r, systemColors.windowText.g,
+                                                        systemColors.windowText.b, 0.55))
+        property color accent: root.paletteColor("primary", systemColors.highlight)
+        property color accent2: root.paletteColor("secondary", systemColors.highlight)
+        property color danger: root.paletteColor("error", "#d1687a")
+        property color success: root.paletteColor("term2", root.paletteColor("tertiary", "#79c98c"))
+        property color onAccent: root.paletteColor("onPrimary", systemColors.highlightedText)
     }
 
     Settings {
@@ -924,6 +949,7 @@ ApplicationWindow {
         property alias followPalette: root.followPalette
         property alias systemWide: root.systemWide
         property alias page: root.page
+        property string lastThemeId: ""
     }
 
     palette.window: colors.bg
@@ -1175,12 +1201,14 @@ ApplicationWindow {
 
                     ActionButton {
                         text: root.remoteLoading ? "Loading…" : "Refresh community"
+                        iconSource: "qrc:/data/icons/refresh.svg"
                         enabled: !root.remoteLoading
                         onClicked: root.fetchRemote()
                     }
 
                     ActionButton {
                         text: "Import folder"
+                        iconSource: "qrc:/data/icons/folder.svg"
                         primary: true
                         onClicked: importDialog.open()
                     }
@@ -1468,12 +1496,14 @@ ApplicationWindow {
                                         spacing: 8
 
                                         ActionButton {
-                                            text: "Choose image"
-                                            onClicked: root.chooseWallpaper()
+                                        text: "Choose image"
+                                        iconSource: "qrc:/data/icons/image.svg"
+                                        onClicked: root.chooseWallpaper()
                                         }
 
                                         ActionButton {
                                             text: "Generate palette"
+                                            iconSource: "qrc:/data/icons/palette.svg"
                                             primary: true
                                             enabled: !root.busy && root.wallpaperPath !== ""
                                             onClicked: root.generateDynamic()
@@ -1706,6 +1736,7 @@ ApplicationWindow {
 
                                                 ActionButton {
                                                     text: "Apply layout"
+                                                    iconSource: "qrc:/data/icons/check.svg"
                                                     primary: true
                                                     onClicked: root.applyLayout(modelData.id)
                                                 }
@@ -1984,6 +2015,7 @@ ApplicationWindow {
 
                                             ActionButton {
                                                 text: "Refresh"
+                                                iconSource: "qrc:/data/icons/refresh.svg"
                                                 onClicked: root.refreshBackups()
                                             }
 
@@ -2324,6 +2356,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.topMargin: 4
                             text: RemoteInstaller.busy ? "Downloading…" : "Download & inspect"
+                            iconSource: "qrc:/data/icons/download.svg"
                             primary: true
                             visible: root.selected && root.selected.needsInstall === true
                             enabled: !RemoteInstaller.busy && root.selected && root.selected.needsInstall === true
@@ -2334,6 +2367,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.topMargin: 4
                             text: root.busy ? "Applying…" : "Apply to selected targets"
+                            iconSource: "qrc:/data/icons/check.svg"
                             primary: true
                             visible: !root.selected || root.selected.needsInstall !== true
                             enabled: !root.busy && root.selected && root.selected.installable !== false
@@ -2372,6 +2406,7 @@ ApplicationWindow {
                         ActionButton {
                             Layout.fillWidth: true
                             text: "Open source page"
+                            iconSource: "qrc:/data/icons/external.svg"
                             visible: root.selected && root.selected.sourceUrl !== ""
                             onClicked: Qt.openUrlExternally(root.selected.sourceUrl)
                         }

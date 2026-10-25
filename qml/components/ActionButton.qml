@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import QtQuick.Window
 
 Button {
@@ -7,6 +8,7 @@ Button {
 
     property bool primary: false
     property bool danger: false
+    property url iconSource
 
     implicitHeight: 32
     leftPadding: 14
@@ -49,18 +51,37 @@ Button {
         opacity: control.enabled ? 1 : 0.6
     }
 
-    contentItem: Text {
-        text: control.text
-        color: !control.enabled
-            ? control.themeColor("faint", "#746a7d")
-            : control.primary
-                ? control.themeColor("onAccent", "#18121e")
-                : control.danger
-                    ? control.themeColor("danger", "#ffb4ab")
-                    : control.themeColor("text", "#f2ecf5")
-        font: control.font
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        elide: Text.ElideRight
+    contentItem: RowLayout {
+        spacing: 6
+
+        AppIcon {
+            visible: control.iconSource != ""
+            iconSize: 14
+            Layout.preferredWidth: 14
+            Layout.preferredHeight: 14
+            source: control.iconSource
+            color: !control.enabled
+                ? control.themeColor("faint", "#746a7d")
+                : control.primary
+                    ? control.themeColor("onAccent", "#18121e")
+                    : control.danger
+                        ? control.themeColor("danger", "#ffb4ab")
+                        : control.themeColor("text", "#f2ecf5")
+        }
+
+        Text {
+            text: control.text
+            color: !control.enabled
+                ? control.themeColor("faint", "#746a7d")
+                : control.primary
+                    ? control.themeColor("onAccent", "#18121e")
+                    : control.danger
+                        ? control.themeColor("danger", "#ffb4ab")
+                        : control.themeColor("text", "#f2ecf5")
+            font: control.font
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
     }
 }

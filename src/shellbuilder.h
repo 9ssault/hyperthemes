@@ -23,6 +23,7 @@ public:
     Q_INVOKABLE QVariantMap build(const QVariantMap &config);
     Q_INVOKABLE QVariantMap load(const QString &name);
     Q_INVOKABLE QVariantList configs() const;
+    Q_INVOKABLE QVariantMap duplicateConfig(const QString &name, const QString &newName);
     Q_INVOKABLE QVariantMap renameConfig(const QString &name, const QString &newName);
     Q_INVOKABLE QVariantMap removeConfig(const QString &name);
     Q_INVOKABLE QVariantMap lint(const QString &name);
@@ -37,6 +38,7 @@ public:
     Q_INVOKABLE void resetSettings();
     Q_INVOKABLE bool quickshellAvailable() const;
     Q_INVOKABLE QString configDir(const QString &name) const;
+    Q_INVOKABLE QString backupsPath() const;
 
     bool isRunning() const;
     QString runLog() const { return m_runLog; }

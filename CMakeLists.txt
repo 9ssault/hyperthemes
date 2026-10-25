@@ -21,6 +21,8 @@ qt_add_executable(hyperthemes
     src/applier.h
     src/catalog.cpp
     src/catalog.h
+    src/cli.cpp
+    src/cli.h
     src/layoutapplier.cpp
     src/layoutapplier.h
     src/localsource.cpp
@@ -77,6 +79,8 @@ if(BUILD_TESTING)
         src/applier.h
         src/catalog.cpp
         src/catalog.h
+        src/cli.cpp
+        src/cli.h
         src/layoutapplier.cpp
         src/layoutapplier.h
         src/palette.cpp

@@ -8,9 +8,11 @@
 #include "remoteinstaller.h"
 #include "shellbuilder.h"
 
+#include <QClipboard>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPalette>
@@ -251,7 +253,7 @@ private slots:
         m_root->setProperty("page", QStringLiteral("explore"));
     }
 
-    void generatedConfigsCanBeRenamedAndDeleted()
+    void generatedConfigsCanBeDuplicatedRenamedAndDeleted()
     {
         const QVariantList themes = m_root->property("themes").toList();
         QVERIFY(!themes.isEmpty());
@@ -267,20 +269,52 @@ private slots:
         const QString from = built.value(QStringLiteral("dir")).toString();
         QVERIFY(QFileInfo::exists(from + QStringLiteral("/shell.qml")));
 
-        m_root->setProperty("page", QStringLiteral("shell"));
-        auto *renameDialog = m_root->findChild<QObject *>(QStringLiteral("renameDialog"));
-        QVERIFY(renameDialog);
-        renameDialog->setProperty("sourceName", QStringLiteral("ui-rename"));
-        QVERIFY(QMetaObject::invokeMethod(renameDialog, "open"));
-        QTRY_VERIFY(renameDialog->property("opened").toBool());
+        bool hasModified = false;
+        bool markedRunning = false;
+        for (const QVariant &entry : m_shellBuilder.configs()) {
+            const QVariantMap item = entry.toMap();
+            if (item.value(QStringLiteral("name")).toString() != QStringLiteral("ui-rename"))
+                continue;
+            hasModified = !item.value(QStringLiteral("modified")).toString().isEmpty();
+            markedRunning = item.value(QStringLiteral("running")).toBool();
+        }
+        QVERIFY(hasModified);
+        QVERIFY(!markedRunning);
 
-        auto *content = renameDialog->property("contentItem").value<QObject *>();
+        m_root->setProperty("page", QStringLiteral("shell"));
+        auto *nameDialog = m_root->findChild<QObject *>(QStringLiteral("configNameDialog"));
+        QVERIFY(nameDialog);
+
+        nameDialog->setProperty("action", QStringLiteral("duplicate"));
+        nameDialog->setProperty("sourceName", QStringLiteral("ui-rename"));
+        QVERIFY(QMetaObject::invokeMethod(nameDialog, "open"));
+        QTRY_VERIFY(nameDialog->property("opened").toBool());
+
+        auto *content = nameDialog->property("contentItem").value<QObject *>();
         QVERIFY(content);
         QTRY_VERIFY_WITH_TIMEOUT(content->property("width").toReal() > 300.0, 2000);
         QTRY_VERIFY_WITH_TIMEOUT(content->property("height").toReal() > 30.0, 2000);
+        QCOMPARE(nameDialog->property("proposedName").toString(), QStringLiteral("ui-rename-copy"));
 
-        renameDialog->setProperty("proposedName", QStringLiteral("ui-renamed"));
-        QVERIFY(QMetaObject::invokeMethod(renameDialog, "accept"));
+        nameDialog->setProperty("proposedName", QStringLiteral("ui-copy"));
+        QVERIFY(QMetaObject::invokeMethod(nameDialog, "accept"));
+        const QString copy = m_temp.path() + QStringLiteral("/config/quickshell/ui-copy");
+        QTRY_VERIFY(QFileInfo::exists(copy + QStringLiteral("/shell.qml")));
+
+        QFile copyManifest(copy + QStringLiteral("/hyperthemes.json"));
+        QVERIFY(copyManifest.open(QIODevice::ReadOnly));
+        const QJsonObject copyRoot = QJsonDocument::fromJson(copyManifest.readAll()).object();
+        copyManifest.close();
+        QCOMPARE(copyRoot.value(QStringLiteral("name")).toString(), QStringLiteral("ui-copy"));
+        QCOMPARE(copyRoot.value(QStringLiteral("config")).toObject().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("ui-copy"));
+
+        nameDialog->setProperty("action", QStringLiteral("rename"));
+        nameDialog->setProperty("sourceName", QStringLiteral("ui-rename"));
+        QVERIFY(QMetaObject::invokeMethod(nameDialog, "open"));
+        QTRY_VERIFY(nameDialog->property("opened").toBool());
+        nameDialog->setProperty("proposedName", QStringLiteral("ui-renamed"));
+        QVERIFY(QMetaObject::invokeMethod(nameDialog, "accept"));
         QTRY_VERIFY(!QFileInfo::exists(from));
 
         const QString to = m_temp.path() + QStringLiteral("/config/quickshell/ui-renamed");
@@ -307,6 +341,7 @@ private slots:
                 backedUp = true;
         }
         QVERIFY(backedUp);
+        QVERIFY(QFileInfo::exists(copy + QStringLiteral("/shell.qml")));
     }
 
     void targetSelectionIsRemembered()
@@ -352,6 +387,13 @@ private slots:
 
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
         QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), true);
+    }
+
+    void copyCommandUsesTheConfigName()
+    {
+        m_root->setProperty("shellName", QStringLiteral("copy-test"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "copyShellCommand"));
+        QCOMPARE(QGuiApplication::clipboard()->text(), QStringLiteral("qs -c copy-test"));
     }
 
     void wallpaperSelectionIsRemembered()

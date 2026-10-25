@@ -1419,6 +1419,11 @@ QString ShellBuilder::configDir(const QString &name) const
     return Paths::configHome() + QStringLiteral("/quickshell/") + name;
 }
 
+QString ShellBuilder::backupsPath() const
+{
+    return Paths::stateDir() + QStringLiteral("/shell-backups");
+}
+
 bool ShellBuilder::quickshellAvailable() const
 {
     return !QStandardPaths::findExecutable(QStringLiteral("qs")).isEmpty()
@@ -1606,6 +1611,9 @@ QVariantList ShellBuilder::configs() const
         item.insert(QStringLiteral("name"), entry);
         item.insert(QStringLiteral("dir"), dir);
         item.insert(QStringLiteral("managed"), QFileInfo::exists(manifestPath(dir)));
+        item.insert(QStringLiteral("running"), isRunning() && m_runName == entry);
+        item.insert(QStringLiteral("modified"),
+                    QFileInfo(dir + QStringLiteral("/shell.qml")).lastModified().toString(Qt::ISODate));
 
         QFile manifest(manifestPath(dir));
         if (manifest.open(QIODevice::ReadOnly)) {
@@ -1617,6 +1625,73 @@ QVariantList ShellBuilder::configs() const
         result.append(item);
     }
     return result;
+}
+
+QVariantMap ShellBuilder::duplicateConfig(const QString &name, const QString &newName)
+{
+    if (!validName(name) || !validName(newName)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"),
+                 QStringLiteral("Use 1–32 lowercase letters, digits, dots, dashes or underscores for the config name.")}};
+    }
+    if (name == newName) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("Choose a different name for the copy.")}};
+    }
+
+    const QString from = configDir(name);
+    const QString to = configDir(newName);
+    if (!QFileInfo::exists(from + QStringLiteral("/shell.qml"))) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("That config no longer exists.")}};
+    }
+    if (QFileInfo::exists(to)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"),
+                 QStringLiteral("A config named %1 already exists.").arg(newName)}};
+    }
+
+    QString error;
+    if (!copyTree(from, to, &error)) {
+        QDir(to).removeRecursively();
+        return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), error}};
+    }
+
+    // A copy is a new config: refresh its identity in the manifest so Load
+    // reports the copy rather than the folder it came from.
+    QJsonObject manifest;
+    QFile manifestFile(manifestPath(to));
+    if (manifestFile.open(QIODevice::ReadOnly))
+        manifest = QJsonDocument::fromJson(manifestFile.readAll()).object();
+    manifestFile.close();
+
+    if (!manifest.isEmpty()) {
+        manifest.insert(QStringLiteral("name"), newName);
+        manifest.insert(QStringLiteral("created"),
+                        QDateTime::currentDateTime().toString(Qt::ISODate));
+        QJsonObject stored = manifest.value(QStringLiteral("config")).toObject();
+        if (!stored.isEmpty()) {
+            stored.insert(QStringLiteral("name"), newName);
+            manifest.insert(QStringLiteral("config"), stored);
+        }
+
+        QSaveFile file(manifestPath(to));
+        bool written = file.open(QIODevice::WriteOnly);
+        if (written) {
+            file.write(QJsonDocument(manifest).toJson(QJsonDocument::Indented));
+            written = file.commit();
+        }
+        if (!written) {
+            QDir(to).removeRecursively();
+            return {{QStringLiteral("ok"), false},
+                    {QStringLiteral("error"), QStringLiteral("The copy could not be written.")}};
+        }
+    }
+
+    return {{QStringLiteral("ok"), true},
+            {QStringLiteral("name"), newName},
+            {QStringLiteral("dir"), to},
+            {QStringLiteral("source"), name}};
 }
 
 QVariantMap ShellBuilder::renameConfig(const QString &name, const QString &newName)

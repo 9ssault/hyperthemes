@@ -654,6 +654,17 @@ ApplicationWindow {
         notify("Renamed " + from + " to " + result.name);
     }
 
+    function shellDuplicate(from, to) {
+        var result = ShellBuilder.duplicateConfig(from, to);
+        if (!result.ok) {
+            shellError = result.error || "The config could not be duplicated.";
+            notify(shellError);
+            return;
+        }
+        refreshShellLists();
+        notify("Duplicated " + from + " as " + result.name);
+    }
+
     function shellRemove(name) {
         var dir = ShellBuilder.configDir(name);
         var result = ShellBuilder.removeConfig(name);
@@ -695,6 +706,14 @@ ApplicationWindow {
     function shellStop() {
         ShellBuilder.stopRun();
         notify("Stopped the generated shell");
+    }
+
+    function copyShellCommand() {
+        var command = "qs -c " + shellName;
+        commandClipboard.text = command;
+        commandClipboard.selectAll();
+        commandClipboard.copy();
+        notify("Copied " + command);
     }
 
     function shellResetSettings() {
@@ -1402,6 +1421,14 @@ ApplicationWindow {
     }
 
     Connections {
+        target: ShellBuilder
+
+        function onRunningChanged() {
+            root.refreshShellLists();
+        }
+    }
+
+    Connections {
         target: RemoteInstaller
 
         function onFinished(result) {
@@ -1434,6 +1461,13 @@ ApplicationWindow {
             root.wallpaperUrl = selectedFile.toString();
             root.wallpaperPath = root.localPath(root.wallpaperUrl);
         }
+    }
+
+    TextEdit {
+        id: commandClipboard
+        visible: false
+        width: 0
+        height: 0
     }
 
     FileDialog {

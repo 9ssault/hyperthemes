@@ -806,6 +806,12 @@ Item {
                         spacing: 6
 
                         ActionButton {
+                            text: "Copy command"
+                            enabled: page.app.shellResult !== ""
+                            onClicked: page.app.copyShellCommand()
+                        }
+
+                        ActionButton {
                             text: "Reset defaults"
                             onClicked: page.app.shellResetSettings()
                         }
@@ -875,56 +881,84 @@ Item {
                     Repeater {
                         model: page.app.shellConfigs
 
-                        RowLayout {
+                        ColumnLayout {
                             required property var modelData
 
                             Layout.fillWidth: true
-                            spacing: 8
+                            spacing: 5
 
-                            ColumnLayout {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                spacing: 1
+                                spacing: 8
 
-                                Text {
+                                ColumnLayout {
                                     Layout.fillWidth: true
-                                    text: modelData.name
-                                    color: page.colors.text
-                                    font.pixelSize: 10
-                                    elide: Text.ElideRight
+                                    spacing: 1
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.name
+                                        color: page.colors.text
+                                        font.pixelSize: 10
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: (modelData.running ? "Running · " : "")
+                                            + (modelData.managed
+                                                ? (modelData.theme ? modelData.theme : "custom palette")
+                                                : "created outside HyperThemes")
+                                            + (modelData.modified
+                                                ? "  ·  " + String(modelData.modified).replace("T", " ").substring(0, 16)
+                                                : "")
+                                        color: modelData.running ? page.colors.accent : page.colors.faint
+                                        font.pixelSize: 9
+                                        elide: Text.ElideRight
+                                    }
                                 }
 
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: modelData.managed
-                                        ? (modelData.theme ? modelData.theme : "custom palette")
-                                        : "created outside HyperThemes"
-                                    color: page.colors.faint
-                                    font.pixelSize: 9
-                                    elide: Text.ElideRight
+                                ActionButton {
+                                    text: "Load"
+                                    enabled: modelData.managed
+                                    onClicked: page.app.shellLoad(modelData.name)
                                 }
                             }
 
-                            ActionButton {
-                                text: "Load"
-                                enabled: modelData.managed
-                                onClicked: page.app.shellLoad(modelData.name)
-                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
 
-                            ActionButton {
-                                text: "Rename"
-                                onClicked: {
-                                    renameDialog.sourceName = modelData.name;
-                                    renameDialog.open();
+                                ActionButton {
+                                    text: "Duplicate"
+                                    onClicked: {
+                                        nameDialog.action = "duplicate";
+                                        nameDialog.sourceName = modelData.name;
+                                        nameDialog.open();
+                                    }
                                 }
-                            }
 
-                            ActionButton {
-                                text: "Delete"
-                                danger: true
-                                onClicked: {
-                                    deleteDialog.targetName = modelData.name;
-                                    deleteDialog.open();
+                                ActionButton {
+                                    text: "Rename"
+                                    enabled: !modelData.running
+                                    onClicked: {
+                                        nameDialog.action = "rename";
+                                        nameDialog.sourceName = modelData.name;
+                                        nameDialog.open();
+                                    }
                                 }
+
+                                ActionButton {
+                                    text: "Delete"
+                                    danger: true
+                                    enabled: !modelData.running
+                                    onClicked: {
+                                        deleteDialog.targetName = modelData.name;
+                                        deleteDialog.open();
+                                    }
+                                }
+
+                                Item { Layout.fillWidth: true }
                             }
                         }
                     }
@@ -933,6 +967,18 @@ Item {
                 ShellCard {
                     title: "BACKUPS"
                     visible: page.app.shellBackupEntries.length > 0
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        ActionButton {
+                            text: "Open backups folder"
+                            onClicked: Qt.openUrlExternally(page.app.fileUrl(ShellBuilder.backupsPath()))
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
 
                     Repeater {
                         model: page.app.shellBackupEntries
@@ -991,19 +1037,25 @@ Item {
     }
 
     Dialog {
-        id: renameDialog
-        objectName: "renameDialog"
+        id: nameDialog
+        objectName: "configNameDialog"
 
+        property string action: "rename"
         property string sourceName: ""
         property string proposedName: ""
 
+        readonly property bool duplicating: action === "duplicate"
+
         function refreshOk() {
-            var button = renameDialog.standardButton(Dialog.Ok);
+            var button = nameDialog.standardButton(Dialog.Ok);
             if (button)
-                button.enabled = proposedName !== sourceName && proposedName.length > 0;
+                button.enabled = proposedName !== sourceName
+                    && /^[a-z0-9][a-z0-9._-]{0,31}$/.test(proposedName);
         }
 
-        title: sourceName === "" ? "Rename config" : "Rename “" + sourceName + "”"
+        title: duplicating
+            ? (sourceName === "" ? "Duplicate config" : "Duplicate “" + sourceName + "”")
+            : (sourceName === "" ? "Rename config" : "Rename “" + sourceName + "”")
         modal: true
         anchors.centerIn: parent
         width: 380
@@ -1011,38 +1063,48 @@ Item {
         closePolicy: Popup.CloseOnEscape
         onProposedNameChanged: refreshOk()
         onOpened: {
-            proposedName = sourceName;
-            renameField.text = sourceName;
-            renameField.forceActiveFocus();
-            renameField.selectAll();
+            var base = sourceName;
+            if (duplicating && base.length > 27)
+                base = base.substring(0, 27);
+            proposedName = duplicating ? base + "-copy" : sourceName;
+            dialogNameField.text = proposedName;
+            dialogNameField.forceActiveFocus();
+            dialogNameField.selectAll();
             refreshOk();
         }
-        onAccepted: page.app.shellRename(sourceName, proposedName)
+        onAccepted: {
+            if (duplicating)
+                page.app.shellDuplicate(sourceName, proposedName);
+            else
+                page.app.shellRename(sourceName, proposedName);
+        }
 
         contentItem: ColumnLayout {
             implicitWidth: 340
             spacing: 8
 
             TextField {
-                id: renameField
+                id: dialogNameField
 
                 Layout.fillWidth: true
                 font.pixelSize: 11
                 color: page.colors.text
                 placeholderTextColor: page.colors.faint
                 selectByMouse: true
-                onTextEdited: renameDialog.proposedName = text.toLowerCase().trim()
+                onTextEdited: nameDialog.proposedName = text.toLowerCase().trim()
                 background: Rectangle {
                     radius: 6
                     color: page.colors.panel2
                     border.width: 1
-                    border.color: renameField.activeFocus ? page.colors.accent : page.colors.border
+                    border.color: dialogNameField.activeFocus ? page.colors.accent : page.colors.border
                 }
             }
 
             Text {
                 Layout.fillWidth: true
-                text: "Lowercase letters, digits, dots, dashes and underscores only."
+                text: nameDialog.duplicating
+                    ? "The copy gets its own folder and manifest; the original is left untouched."
+                    : "Lowercase letters, digits, dots, dashes and underscores only."
                 color: page.colors.faint
                 font.pixelSize: 9
                 wrapMode: Text.WordWrap

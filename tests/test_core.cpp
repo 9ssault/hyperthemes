@@ -2,6 +2,7 @@
 
 #include "applier.h"
 #include "catalog.h"
+#include "cli.h"
 #include "layoutapplier.h"
 #include "palette.h"
 #include "palettegenerator.h"
@@ -277,6 +278,8 @@ private slots:
     void shellBuilderWritesQuickshellConfig()
     {
         ShellBuilder builder;
+        QCOMPARE(builder.backupsPath(), Paths::stateDir() + QStringLiteral("/shell-backups"));
+        QVERIFY(QFileInfo::exists(builder.backupsPath()));
         QVERIFY(builder.widgets().size() >= 13);
         QVERIFY(builder.defaults().value(QStringLiteral("zones")).toMap()
                     .value(QStringLiteral("center")).toStringList().contains(QStringLiteral("clock")));
@@ -602,6 +605,22 @@ private slots:
         }
         QVERIFY(listed);
 
+        const QVariantMap copied = builder.duplicateConfig(QStringLiteral("renamed"),
+                                                           QStringLiteral("renamed-copy"));
+        QVERIFY2(copied.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(copied.value(QStringLiteral("error")).toString()));
+        QCOMPARE(copied.value(QStringLiteral("name")).toString(), QStringLiteral("renamed-copy"));
+        const QString copy = copied.value(QStringLiteral("dir")).toString();
+        QVERIFY(QFileInfo::exists(copy + QStringLiteral("/shell.qml")));
+        const QVariantMap copyManifest = QJsonDocument::fromJson(
+            readFile(copy + QStringLiteral("/hyperthemes.json")).toUtf8()).object().toVariantMap();
+        QCOMPARE(copyManifest.value(QStringLiteral("name")).toString(), QStringLiteral("renamed-copy"));
+        QVERIFY(builder.load(QStringLiteral("renamed-copy")).value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.duplicateConfig(QStringLiteral("renamed"), QStringLiteral("renamed-copy"))
+                     .value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.duplicateConfig(QStringLiteral("renamed"), QStringLiteral("renamed"))
+                     .value(QStringLiteral("ok")).toBool());
+
         const QVariantMap removed = builder.removeConfig(QStringLiteral("renamed"));
         QVERIFY2(removed.value(QStringLiteral("ok")).toBool(),
                  qPrintable(removed.value(QStringLiteral("error")).toString()));
@@ -618,6 +637,70 @@ private slots:
         QVERIFY(QFileInfo::exists(to + QStringLiteral("/shell.qml")));
 
         QVERIFY(!builder.removeConfig(QStringLiteral("never-existed")).value(QStringLiteral("ok")).toBool());
+    }
+
+    void cliListsTargetsAndThemes()
+    {
+        const Cli::Result targets = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--list-targets")});
+        QVERIFY(targets.handled);
+        QCOMPARE(targets.exitCode, 0);
+        QCOMPARE(targets.error, QString());
+        QVERIFY(targets.output.contains(QStringLiteral("btop")));
+        QVERIFY(targets.output.contains(QStringLiteral("hyprland")));
+
+        const Cli::Result filtered = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--list-themes"),
+                                               QStringLiteral("dracula")});
+        QCOMPARE(filtered.exitCode, 0);
+        QVERIFY(!filtered.output.isEmpty());
+        QVERIFY(filtered.output.contains(QStringLiteral("dracula"), Qt::CaseInsensitive));
+
+        const Cli::Result inlineFilter = Cli::run({QStringLiteral("hyperthemes"),
+                                                   QStringLiteral("--list-themes=Catppuccin")});
+        QCOMPARE(inlineFilter.exitCode, 0);
+        QVERIFY(!inlineFilter.output.isEmpty());
+
+        QVERIFY(Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("--apply"),
+                                QStringLiteral("Dracula")}));
+        QVERIFY(!Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("-platform"),
+                                 QStringLiteral("offscreen")}));
+    }
+
+    void cliAppliesAThemeToChosenTargets()
+    {
+        QDir(Paths::configHome()).removeRecursively();
+
+        const Cli::Result usage = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"),
+                                            QStringLiteral("Dracula")});
+        QCOMPARE(usage.exitCode, 2);
+        QVERIFY(usage.error.contains(QStringLiteral("target"), Qt::CaseInsensitive));
+
+        const Cli::Result unknownTarget = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"),
+                                                    QStringLiteral("Dracula"), QStringLiteral("--target"),
+                                                    QStringLiteral("printer")});
+        QCOMPARE(unknownTarget.exitCode, 2);
+        QVERIFY(unknownTarget.error.contains(QStringLiteral("Unknown target")));
+
+        const Cli::Result missing = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"),
+                                              QStringLiteral("no-such-theme"), QStringLiteral("--target"),
+                                              QStringLiteral("gtk")});
+        QCOMPARE(missing.exitCode, 1);
+
+        const QVariantList themes = Catalog().load();
+        QVERIFY(!themes.isEmpty());
+        const QVariantMap chosen = themes.first().toMap();
+        const QString id = chosen.value(QStringLiteral("id")).toString();
+        const QString name = chosen.value(QStringLiteral("name")).toString();
+
+        const Cli::Result applied = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"), id,
+                                              QStringLiteral("--target"), QStringLiteral("gtk")});
+        QCOMPARE(applied.exitCode, 0);
+        QCOMPARE(applied.error, QString());
+        QVERIFY2(applied.output.contains(name), qPrintable(applied.output));
+        QVERIFY(QFileInfo::exists(Paths::configHome() + QStringLiteral("/gtk-3.0/hyperthemes.css")));
+
+        const Cli::Result byName = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"), name,
+                                             QStringLiteral("--targets"), QStringLiteral("gtk")});
+        QCOMPARE(byName.exitCode, 0);
     }
 
     void wallpaperOnlyApplyChecksTheFile()

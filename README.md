@@ -17,9 +17,11 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 - **Dynamic wallpapers** — pick any image, let `matugen` derive a complete palette, apply that palette, or set the custom wallpaper on its own. The chosen image is remembered between launches.
 - **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, btop, Zellij, Hyprland, Spicetify and Vesktop.
 - **Layout presets** — three Caelestia bar layouts and three KDE Plasma panel layouts, applied with a backup and a restore path.
-- **Quickshell builder** — compose a standalone Quickshell config (bar zones, 13 entries, typography, launcher, dashboard, radius, opacity, per-monitor bars) from the selected palette, write it to `~/.config/quickshell/<name>/`, validate it with `qmllint`, run and stop it, export it, or load an earlier generated config back into the builder.
+- **Quickshell builder** — compose a standalone Quickshell config (bar zones, 13 entries, typography, launcher, dashboard, radius, opacity, per-monitor bars) from the selected palette, write it to `~/.config/quickshell/<name>/`, validate it with `qmllint`, run and stop it, export it, copy its run command, or load an earlier generated config back into the builder.
+- **Config management** — generated folders can be duplicated, renamed and deleted from the Shell page. The list marks the config that is currently running and when each folder was last written.
+- **Command line** — `--apply` a theme to exactly the targets you name, plus `--list-themes` and `--list-targets` for scripting and discovery, without opening a window.
 - **User or system-wide** — KDE color schemes can be written to `~/.local/share/color-schemes` or `/usr/share/color-schemes` through `pkexec`.
-- **Backups** — `~/.local/state/hyperthemes/backups/<timestamp>-<theme>/` contains the previous files and a manifest. Restore from the Settings page. Layouts use a separate `layout-backups/` tree.
+- **Backups** — `~/.local/state/hyperthemes/backups/<timestamp>-<theme>/` contains the previous files and a manifest. Restore from the Settings page. Layouts use a separate `layout-backups/` tree, and generated Quickshell folders use `shell-backups/`.
 
 Remote sources are no longer browse-only for color content. Selecting a remote card offers **Download & inspect**; HyperThemes saves the discovered palette file under `~/.local/share/hyperthemes/themes/` and then uses the same apply and rollback pipeline as local themes. If an archive contains only layout files or unsupported formats, the app says so and keeps the source link available.
 
@@ -48,6 +50,20 @@ cmake --install build --prefix ~/.local
 The app reads its catalog and templates from embedded resources, so the binary is self-contained apart from the optional tools below.
 
 Tagged releases (`v*`) also publish a `hyperthemes-<tag>-linux-x86_64.tar.gz` artifact from CI. It installs into a `usr/` prefix inside the tarball and expects the system Qt 6.5+ libraries.
+
+## Command line
+
+The binary opens the window by default. With one of the headless options it runs without creating a window, which makes it usable from scripts, keybindings and SSH:
+
+```bash
+hyperthemes --list-targets
+hyperthemes --list-themes catppuccin
+hyperthemes --apply base16-dracula --target gtk
+hyperthemes --apply Dracula --targets gtk,kitty,foot
+hyperthemes --apply base16-dracula --target kde --system
+```
+
+`--apply` needs at least one `--target` or `--targets` value, so a CLI run never touches more files than the command names. The theme can be a catalog id or an exact name; `--list-themes` accepts an optional case-insensitive filter and prints `id`, `name` and `category` as tab-separated columns. Backups, rollback manifests and skipped-tool warnings are the same as in the window. Exit codes are `0` for success, `1` for a failed apply or unknown theme, and `2` for a usage error.
 
 ## Optional tools
 
@@ -122,9 +138,9 @@ hyperthemes.json          the builder inputs, used by Load and Configs
 README.md                 run, IPC and editing notes
 ```
 
-Run it with `qs -c <name>`. The preview shows the bar with the real palette, then mock launcher and dashboard panels so the layout can be checked before writing. **Validate** runs `qmllint` over the generated tree, **Run** starts the config as a child of HyperThemes (and **Stop** ends it), **Export** writes a `.tar.gz`, and **Generated configs** can load any previous HyperThemes config back into the builder. Each generated folder can also be renamed or deleted from that list; deletion copies the folder to Backups first, and a running config must be stopped before either action.
+Run it with `qs -c <name>`. The preview shows the bar with the real palette, then mock launcher and dashboard panels so the layout can be checked before writing. **Validate** runs `qmllint` over the generated tree, **Run** starts the config as a child of HyperThemes (and **Stop** ends it), **Export** writes a `.tar.gz`, **Copy command** puts `qs -c <name>` on the clipboard, and **Generated configs** can load any previous HyperThemes config back into the builder. Each generated folder can also be duplicated, renamed or deleted from that list; the running config is marked, and it must be stopped before it can be renamed or deleted. Deletion copies the folder to Backups first, and the Backups card has a shortcut to open that folder.
 
-Every write, and every delete, copies the folder to `~/.local/state/hyperthemes/shell-backups/<timestamp>-<name>/`; the Backups card restores any of them, not just the last. Each generated folder contains a `hyperthemes.json` manifest, and restores are refused unless the backup points at a direct child of the Quickshell config folder. The launcher and dashboard expose IPC targets:
+Every write, and every delete, copies the folder to `~/.local/state/hyperthemes/shell-backups/<timestamp>-<name>/`; the Backups card restores any of them, not just the last and can open the backup folder in the file manager. Each generated folder contains a `hyperthemes.json` manifest, and restores are refused unless the backup points at a direct child of the Quickshell config folder. The launcher and dashboard expose IPC targets:
 
 ```bash
 qs ipc call launcher toggle
@@ -233,4 +249,4 @@ ctest --test-dir build --output-on-failure
 QT_QPA_PLATFORM=offscreen ./build/hyperthemes
 ```
 
-The tests cover palette fallbacks, every template, apply/rollback (including btop, Zellij and Hyprland), Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, Quickshell config generation, every generated widget, manifest load, config rename/delete with backup, settings persistence/reset, per-theme target memory, export, restoration, a tampered-manifest guard, and QML smoke tests that drive the builder page and its dialogs. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.
+The tests cover palette fallbacks, every template, apply/rollback (including btop, Zellij and Hyprland), Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, Quickshell config generation, every generated widget, manifest load, config duplicate/rename/delete with backup, settings persistence/reset, per-theme target memory, CLI listing and apply, export, restoration, a tampered-manifest guard, and QML smoke tests that drive the builder page, its dialogs and the clipboard command. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.

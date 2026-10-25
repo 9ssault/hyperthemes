@@ -1,6 +1,7 @@
 #include "applier.h"
 #include "catalog.h"
 #include "cli.h"
+#include "cursorpreview.h"
 #include "layoutapplier.h"
 #include "localsource.h"
 #include "palettegenerator.h"
@@ -44,6 +45,7 @@ int main(int argc, char *argv[])
     QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/data/hyperthemes.svg")));
 
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+    qmlRegisterType<PointerShapeItem>("HyperThemes", 1, 0, "PointerShape");
 
     Applier applier;
     Catalog catalog;

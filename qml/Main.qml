@@ -30,7 +30,6 @@ ApplicationWindow {
     property var targetOptions: []
     property var collectionModel: []
     property var categoryModel: []
-    property int categorySignature: -1
     property var modeModel: [{ label: "Any mode", value: "All" }, { label: "Dark", value: "dark" }, { label: "Light", value: "light" }]
     property var sortModel: ["Name", "Stars", "Source"]
     property var targetFilterModel: [
@@ -60,6 +59,14 @@ ApplicationWindow {
     property string compareSearch: ""
     property var compareResults: []
     property var applyResults: []
+    readonly property var pointerShapes: Applier.cursorShapes()
+    property var favoriteLookup: ({})
+    property var searchCache: ({})
+    property var sortCache: ({})
+    property string catalogSignature: ""
+    property int catalogRevision: 0
+    property int collectionRevision: -1
+    property int categoryRevision: -1
     readonly property color appAccent: colors.accent
     readonly property color appBackground: colors.bg
     readonly property color appText: colors.text
@@ -153,7 +160,15 @@ ApplicationWindow {
     }
 
     function isFavorite(id) {
-        return id !== undefined && root.idList(prefs.favoriteIds).indexOf(id) >= 0;
+        return id !== undefined && root.favoriteLookup[id] === true;
+    }
+
+    function refreshFavoriteLookup() {
+        var map = {};
+        var list = root.idList(prefs.favoriteIds);
+        for (var i = 0; i < list.length; ++i)
+            map[list[i]] = true;
+        root.favoriteLookup = map;
     }
 
     function toggleFavorite(id) {
@@ -166,6 +181,7 @@ ApplicationWindow {
         else
             list.unshift(id);
         prefs.favoriteIds = JSON.stringify(list);
+        root.refreshFavoriteLookup();
         root.recompute();
         root.notify(index >= 0 ? "Removed from favorites" : "Added to favorites");
     }
@@ -383,6 +399,9 @@ ApplicationWindow {
     }
 
     function buildCollections(all) {
+        if (collectionRevision === catalogRevision)
+            return;
+        collectionRevision = catalogRevision;
         var counts = {};
         for (var i = 0; i < all.length; ++i) {
             var source = all[i] ? all[i].source : "";
@@ -417,9 +436,9 @@ ApplicationWindow {
     }
 
     function buildCategoryTiles(all) {
-        if (all.length === categorySignature)
+        if (categoryRevision === catalogRevision)
             return;
-        categorySignature = all.length;
+        categoryRevision = catalogRevision;
         var collections = {};
         var collectionOrder = [];
         var families = {};
@@ -516,8 +535,34 @@ ApplicationWindow {
         recompute();
     }
 
+    function sortedThemes(all, mode) {
+        var key = mode + ":" + root.catalogRevision;
+        if (root.sortCache[key])
+            return root.sortCache[key];
+        var copy = all.slice();
+        copy.sort(function(a, b) {
+            if (mode === "Stars")
+                return (b.stars || 0) - (a.stars || 0);
+            if (mode === "Source")
+                return String(a.source || "").localeCompare(String(b.source || ""));
+            return String(a.name || "").localeCompare(String(b.name || ""));
+        });
+        root.sortCache[key] = copy;
+        return copy;
+    }
+
     function recompute() {
         var all = themes.concat(localThemes, remoteThemes);
+        var signature = themes.length + ":" + localThemes.length + ":" + remoteThemes.length;
+        if (signature !== catalogSignature) {
+            catalogSignature = signature;
+            ++catalogRevision;
+            searchCache = ({});
+            sortCache = ({});
+            collectionRevision = -1;
+            categoryRevision = -1;
+        }
+
         var list = [];
         var seen = {};
         var lower = search.toLowerCase();
@@ -525,8 +570,9 @@ ApplicationWindow {
         buildCollections(all);
         buildCategoryTiles(all);
 
-        for (var i = 0; i < all.length; ++i) {
-            var item = all[i];
+        var ordered = sortedThemes(all, sortMode);
+        for (var i = 0; i < ordered.length; ++i) {
+            var item = ordered[i];
             if (!item || !item.id || seen[item.id])
                 continue;
             seen[item.id] = true;
@@ -547,20 +593,18 @@ ApplicationWindow {
             if (favoritesOnly && favorites.indexOf(item.id) < 0)
                 continue;
             if (lower.length > 0) {
-                var haystack = ((item.name || "") + " " + (item.description || "") + " " + (item.author || "") + " " + (item.source || "") + " " + (item.category || "")).toLowerCase();
+                var haystack = root.searchCache[item.id];
+                if (haystack === undefined) {
+                    haystack = ((item.name || "") + " " + (item.description || "") + " "
+                                + (item.author || "") + " " + (item.source || "") + " "
+                                + (item.category || "")).toLowerCase();
+                    root.searchCache[item.id] = haystack;
+                }
                 if (haystack.indexOf(lower) < 0)
                     continue;
             }
             list.push(item);
         }
-
-        list.sort(function(a, b) {
-            if (sortMode === "Stars")
-                return (b.stars || 0) - (a.stars || 0);
-            if (sortMode === "Source")
-                return String(a.source || "").localeCompare(String(b.source || ""));
-            return String(a.name || "").localeCompare(String(b.name || ""));
-        });
 
         filtered = list;
     }
@@ -696,6 +740,29 @@ ApplicationWindow {
             refreshBackups();
         } else {
             applyError = result.error || "Apply failed";
+            notify(applyError);
+        }
+    }
+
+    function applyPointer() {
+        if (!selected || !hasPalette(selected)) {
+            notify("Pick a theme with a palette before applying its pointer.");
+            return;
+        }
+        busy = true;
+        applyWarnings = [];
+        applyError = "";
+        applyResults = [];
+        var result = Applier.apply(selected, ["cursor"], systemWide);
+        busy = false;
+        applyWarnings = result.warnings || [];
+        applyResults = result.results || [];
+        if (result.ok) {
+            statusText = "Applied pointer";
+            notify("Applied the " + Applier.cursorSize + " px pointer · backup " + result.backup);
+            refreshBackups();
+        } else {
+            applyError = result.error || "Pointer apply failed";
             notify(applyError);
         }
     }
@@ -1024,7 +1091,10 @@ ApplicationWindow {
             power: "⏻",
             separator: "│",
             spacer: "",
-            systemLoad: "load 0.4"
+            systemLoad: "load 0.4",
+            uptime: "up 3h 12m",
+            memory: "mem 3.4 GB",
+            notifications: "🔔 2"
         };
         return labels[id] || id;
     }
@@ -1663,12 +1733,59 @@ ApplicationWindow {
         onTriggered: ShellBuilder.saveSettings(root.shellConfig())
     }
 
+    Timer {
+        id: searchDebounce
+        interval: 140
+        onTriggered: root.recompute()
+    }
+
+    Timer {
+        id: windowSaveTimer
+        interval: 400
+        onTriggered: root.saveWindowGeometry()
+    }
+
+    function restoreWindowPosition() {
+        if (!prefs.windowScreen)
+            return;
+        var screens = Qt.application.screens;
+        for (var i = 0; i < screens.length; ++i) {
+            if (screens[i].name !== prefs.windowScreen)
+                continue;
+            var target = screens[i];
+            var originX = target.virtualX;
+            var originY = target.virtualY;
+            x = Math.max(originX, Math.min(originX + target.width - width, originX + prefs.windowX));
+            y = Math.max(originY, Math.min(originY + target.height - height, originY + prefs.windowY));
+            return;
+        }
+    }
+
+    function saveWindowGeometry() {
+        prefs.windowWidth = width;
+        prefs.windowHeight = height;
+        var current = root.screen;
+        prefs.windowScreen = current ? current.name : "";
+        prefs.windowX = current ? x - current.virtualX : x;
+        prefs.windowY = current ? y - current.virtualY : y;
+    }
+
+    onWidthChanged: windowSaveTimer.restart()
+    onHeightChanged: windowSaveTimer.restart()
+    onXChanged: windowSaveTimer.restart()
+    onYChanged: windowSaveTimer.restart()
+    onClosing: saveWindowGeometry()
+
     Connections {
         target: Applier
 
         function onStatusChanged() {
             if (Applier.status.length > 0)
                 root.statusText = Applier.status;
+        }
+
+        function onCursorSizeChanged() {
+            prefs.cursorSize = Applier.cursorSize;
         }
     }
 
@@ -1771,6 +1888,12 @@ ApplicationWindow {
         property alias compactCards: root.compactCards
         property alias inspectorOpen: root.inspectorOpen
         property alias inspectorWidth: root.inspectorWidth
+        property int windowWidth: 1380
+        property int windowHeight: 880
+        property int windowX: 0
+        property int windowY: 0
+        property string windowScreen: ""
+        property int cursorSize: 32
         property string lastThemeId: ""
         property string targetSelections: "{}"
         property string favoriteIds: "[]"
@@ -1819,6 +1942,11 @@ ApplicationWindow {
     onShellZonesChanged: shellSaveTimer.restart()
 
     Component.onCompleted: {
+        width = Math.max(minimumWidth, prefs.windowWidth);
+        height = Math.max(minimumHeight, prefs.windowHeight);
+        restoreWindowPosition();
+        Applier.cursorSize = prefs.cursorSize;
+        refreshFavoriteLookup();
         if (wallpaperPath !== "")
             wallpaperUrl = fileUrl(wallpaperPath);
         loadCatalog();
@@ -2188,7 +2316,7 @@ ApplicationWindow {
                         selectByMouse: true
                         onTextChanged: {
                             root.search = text;
-                            root.recompute();
+                            searchDebounce.restart();
                         }
 
                         AppIcon {
@@ -2488,782 +2616,44 @@ ApplicationWindow {
                     Item {
                         anchors.fill: parent
                         visible: root.page === "dynamic"
-                        ColumnLayout {
+
+                        Loader {
                             anchors.fill: parent
-                            spacing: 14
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 16
-
-                                Rectangle {
-                                    Layout.preferredWidth: 300
-                                    Layout.maximumWidth: 340
-                                    Layout.preferredHeight: 200
-                                    radius: 12
-                                    color: colors.panel2
-                                    border.width: 1
-                                    border.color: colors.border
-                                    clip: true
-
-                                    Image {
-                                        anchors.fill: parent
-                                        source: root.wallpaperUrl
-                                        fillMode: Image.PreserveAspectCrop
-                                        asynchronous: true
-                                        visible: source !== "" && status !== Image.Error
-                                    }
-
-                                    Text {
-                                        anchors.centerIn: parent
-                                        visible: root.wallpaperUrl === ""
-                                        text: "Choose a wallpaper\nto extract a palette"
-                                        color: colors.faint
-                                        font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        lineHeight: 1.3
-                                    }
-                                }
-
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-
-                                    Text {
-                                        text: "WALLPAPER"
-                                        color: colors.muted
-                                        font.pixelSize: 9
-                            font.letterSpacing: 0.5
-                            font.weight: Font.DemiBold
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: root.wallpaperPath || "No image selected"
-                                        color: colors.muted
-                                        font.pixelSize: 11
-                                        elide: Text.ElideMiddle
-                                    }
-
-                                    Flow {
-                                        Layout.fillWidth: true
-                                        spacing: 8
-
-                                        ActionButton {
-                                            text: "Choose image"
-                                            iconSource: "qrc:/data/icons/image.svg"
-                                            onClicked: root.chooseWallpaper()
-                                        }
-
-                                        ActionButton {
-                                            text: "Generate palette"
-                                            iconSource: "qrc:/data/icons/palette.svg"
-                                            primary: true
-                                            enabled: !root.busy && root.wallpaperPath !== ""
-                                            onClicked: root.generateDynamic()
-                                        }
-
-                                        ActionButton {
-                                            text: "Set wallpaper"
-                                            iconSource: "qrc:/data/icons/image.svg"
-                                            enabled: !root.busy && root.wallpaperPath !== ""
-                                            onClicked: root.applyWallpaperSelection()
-                                        }
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: root.dynamicError
-                                        visible: root.dynamicError !== ""
-                                        color: colors.danger
-                                        font.pixelSize: 11
-                                        wrapMode: Text.WordWrap
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: "Matugen writes no files here: HyperThemes asks it for the palette, then applies the targets you choose. Your wallpaper is remembered between launches."
-                                        color: colors.faint
-                                        font.pixelSize: 10
-                                        wrapMode: Text.WordWrap
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                radius: 12
-                                color: colors.panel
-                                border.width: 1
-                                border.color: colors.border
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 18
-                                    spacing: 12
-
-                                    Text {
-                                        text: "PALETTE OPTIONS"
-                                        color: colors.muted
-                                        font.pixelSize: 9
-                            font.letterSpacing: 0.5
-                            font.weight: Font.DemiBold
-                                    }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 16
-
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 4
-
-                                            Text {
-                                                text: "Mode"
-                                                color: colors.muted
-                                                font.pixelSize: 11
-                                            }
-
-                                            ComboBox {
-                                                Layout.fillWidth: true
-                                                model: ["Dark", "Light"]
-                                                Layout.preferredHeight: 32
-                                                onActivated: function(index) {
-                                                    root.dynamicMode = index === 0 ? "dark" : "light";
-                                                }
-                                            }
-                                        }
-
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 4
-
-                                            Text {
-                                                text: "Scheme"
-                                                color: colors.muted
-                                                font.pixelSize: 11
-                                            }
-
-                                            ComboBox {
-                                                Layout.fillWidth: true
-                                                model: ["Tonal spot", "Vibrant", "Expressive", "Content", "Fidelity", "Monochrome", "Neutral", "Rainbow", "Fruit salad", "Smart"]
-                                                Layout.preferredHeight: 32
-                                                onActivated: function(index) {
-                                                    var values = ["scheme-tonal-spot", "scheme-vibrant", "scheme-expressive", "scheme-content", "scheme-fidelity", "scheme-monochrome", "scheme-neutral", "scheme-rainbow", "scheme-fruit-salad", "scheme-smart"];
-                                                    root.dynamicScheme = values[index];
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 12
-
-                                        Text {
-                                            text: "Contrast"
-                                            color: colors.muted
-                                            font.pixelSize: 11
-                                        }
-
-                                        Slider {
-                                            Layout.fillWidth: true
-                                            from: -1
-                                            to: 1
-                                            stepSize: 0.05
-                                            value: root.dynamicContrast
-                                            onMoved: root.dynamicContrast = value
-                                        }
-
-                                        Text {
-                                            text: root.dynamicContrast.toFixed(2)
-                                            color: colors.faint
-                                            font.pixelSize: 10
-                                        }
-                                    }
-
-                                    Item { Layout.fillHeight: true }
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-                                        visible: root.dynamicTheme !== null
-
-                                        Repeater {
-                                            model: ["primary", "secondary", "tertiary", "surface", "surfaceContainerHigh", "error"]
-
-                                            Rectangle {
-                                                Layout.fillWidth: true
-                                                Layout.preferredHeight: 34
-                                                radius: 7
-                                                color: root.dynamicTheme ? root.colorFrom(root.dynamicTheme, modelData, "#333039") : "#333039"
-                                            }
-                                        }
-                                    }
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        visible: root.dynamicTheme !== null
-                                        text: "The generated palette is selected on the right. Choose targets and apply it."
-                                        color: colors.faint
-                                        font.pixelSize: 10
-                                        wrapMode: Text.WordWrap
-                                    }
-                                }
-                            }
+                            active: root.page === "dynamic"
+                            sourceComponent: dynamicPageComponent
                         }
                     }
 
                     Item {
                         anchors.fill: parent
                         visible: root.page === "layouts"
-                        ScrollView {
+
+                        Loader {
                             anchors.fill: parent
-                            contentWidth: availableWidth
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                            ColumnLayout {
-                                width: Math.max(320, parent.width - 8)
-                                spacing: 12
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                            radius: 10
-                            color: colors.panel
-                                    border.width: 1
-                                    border.color: colors.border
-                                    implicitHeight: layoutIntro.implicitHeight + 30
-
-                                    ColumnLayout {
-                                        id: layoutIntro
-                                        anchors.fill: parent
-                                        anchors.margins: 16
-                                        spacing: 6
-
-                                        Text {
-                                            text: "PANEL LAYOUTS"
-                                            color: colors.muted
-                                            font.pixelSize: 9
-                                        font.letterSpacing: 0.5
-                                        font.weight: Font.DemiBold
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "Caelestia presets merge into shell.json and keep your general, service and lock settings. KDE presets replace the current Plasma panels through Plasma's scripting API. Both paths take a backup first."
-                                            color: colors.muted
-                                            font.pixelSize: 11
-                                            wrapMode: Text.WordWrap
-                                        }
-                                    }
-                                }
-
-                                Repeater {
-                                    model: root.layoutPresets
-
-                                    Rectangle {
-                                        required property var modelData
-
-                                        Layout.fillWidth: true
-                                    radius: 10
-                                    color: colors.panel
-                                        border.width: 1
-                                        border.color: colors.border
-                                        implicitHeight: layoutCard.implicitHeight + 30
-
-                                        ColumnLayout {
-                                            id: layoutCard
-                                            anchors.fill: parent
-                                            anchors.margins: 16
-                                            spacing: 8
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 8
-
-                                                Pill {
-                                                    text: modelData.targetLabel
-                                                    background: colors.elevated
-                                                    foreground: colors.accent
-                                                }
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: modelData.name
-                                                    color: colors.text
-                                                    font.pixelSize: 14
-                                                    font.weight: Font.DemiBold
-                                                    elide: Text.ElideRight
-                                                }
-
-                                                ActionButton {
-                                                    text: "Apply layout"
-                                                    iconSource: "qrc:/data/icons/check.svg"
-                                                    primary: true
-                                                    onClicked: root.applyLayout(modelData.id)
-                                                }
-                                            }
-
-                                            Text {
-                                                Layout.fillWidth: true
-                                                text: modelData.description
-                                                color: colors.muted
-                                                font.pixelSize: 11
-                                                wrapMode: Text.WordWrap
-                                            }
-
-                                            Rectangle {
-                                                Layout.fillWidth: true
-                                                height: 38
-                                                radius: 8
-                                                color: colors.bg
-
-                                                Rectangle {
-                                                    width: parent.width * 0.72
-                                                    height: 9
-                                                    radius: 4
-                                                    color: colors.accent
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                    y: String(modelData.id).indexOf("bottom") >= 0 ? parent.height - height - 6 : 6
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    visible: root.layoutError !== ""
-                                    text: root.layoutError
-                                    color: colors.danger
-                                    font.pixelSize: 11
-                                    wrapMode: Text.WordWrap
-                                }
-
-                                Repeater {
-                                    model: root.layoutWarnings
-
-                                    Text {
-                                        Layout.fillWidth: true
-                                        text: "• " + modelData
-                                        color: "#d8b26a"
-                                        font.pixelSize: 10
-                                        wrapMode: Text.WordWrap
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                            radius: 10
-                            color: colors.panel
-                                    border.width: 1
-                                    border.color: colors.border
-                                    implicitHeight: layoutBackupColumn.implicitHeight + 30
-
-                                    ColumnLayout {
-                                        id: layoutBackupColumn
-                                        anchors.fill: parent
-                                        anchors.margins: 16
-                                        spacing: 8
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-
-                                            Text {
-                                                text: "LAYOUT BACKUPS"
-                                                color: colors.muted
-                                                font.pixelSize: 9
-                                                font.letterSpacing: 0.5
-                                                font.weight: Font.DemiBold
-                                            }
-
-                                            Item { Layout.fillWidth: true }
-
-                                            ActionButton {
-                                                text: "Restore last"
-                                                enabled: root.layoutBackups.length > 0
-                                                danger: true
-                                                onClicked: root.restoreLayout(root.layoutBackups[0])
-                                            }
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            visible: root.layoutBackups.length === 0
-                                            text: "No layout backups yet."
-                                            color: colors.muted
-                                            font.pixelSize: 11
-                                        }
-
-                                        Repeater {
-                                            model: root.layoutBackups
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 8
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: modelData
-                                                    color: colors.muted
-                                                    font.pixelSize: 11
-                                                    elide: Text.ElideRight
-                                                }
-
-                                                ActionButton {
-                                                    text: "Restore"
-                                                    onClicked: root.restoreLayout(modelData)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Item { Layout.fillHeight: true }
-                            }
+                            active: root.page === "layouts"
+                            sourceComponent: layoutsPageComponent
                         }
                     }
 
                     Item {
                         anchors.fill: parent
                         visible: root.page === "settings"
-                        ScrollView {
+
+                        Loader {
                             anchors.fill: parent
-                            contentWidth: availableWidth
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                            ColumnLayout {
-                                width: Math.max(320, parent.width - 8)
-                                spacing: 14
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                            radius: 10
-                            color: colors.panel
-                                    border.width: 1
-                                    border.color: colors.border
-                                    implicitHeight: sourceColumn.implicitHeight + 30
-
-                                    ColumnLayout {
-                                        id: sourceColumn
-                                        anchors.fill: parent
-                                        anchors.margins: 16
-                                        spacing: 8
-
-                                        Text {
-                                            text: "SOURCES"
-                                            color: colors.muted
-                                            font.pixelSize: 9
-                                        font.letterSpacing: 0.5
-                                        font.weight: Font.DemiBold
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "The catalog ships with bundled Caelestia schemes and Base16 palettes. Local imports read Caelestia scheme files, KDE .colors files, and HyperThemes JSON. KDE Store and GitHub entries download on demand; archives are inspected for a palette or a Plasma package before anything touches your configuration."
-                                            color: colors.muted
-                                            font.pixelSize: 11
-                                            wrapMode: Text.WordWrap
-                                        }
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 8
-
-                                            ActionButton {
-                                                text: "Import Caelestia schemes"
-                                                enabled: LocalSource.defaultCaelestiaDir() !== ""
-                                                onClicked: root.importPath(LocalSource.defaultCaelestiaDir())
-                                            }
-
-                                            ActionButton {
-                                                text: "Import KDE colors"
-                                                onClicked: root.importPath(LocalSource.defaultKdeColorDir())
-                                            }
-
-                                            ActionButton {
-                                                text: "Import folder…"
-                                                onClicked: importDialog.open()
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                            radius: 10
-                            color: colors.panel
-                                    border.width: 1
-                                    border.color: colors.border
-                                    implicitHeight: appearanceColumn.implicitHeight + 30
-
-                                    ColumnLayout {
-                                        id: appearanceColumn
-                                        anchors.fill: parent
-                                        anchors.margins: 16
-                                        spacing: 8
-
-                                        Text {
-                                            text: "APPEARANCE"
-                                            color: colors.muted
-                                            font.pixelSize: 9
-                                        font.letterSpacing: 0.5
-                                        font.weight: Font.DemiBold
-                                        }
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 2
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: "Match the app to the selected palette"
-                                                    color: colors.text
-                                                    font.pixelSize: 12
-                                                    font.weight: Font.DemiBold
-                                                }
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: "Surfaces, text, accents, controls and this panel follow the theme you pick. Turn it off for the original dark shell."
-                                                    color: colors.muted
-                                                    font.pixelSize: 10
-                                                    wrapMode: Text.WordWrap
-                                                }
-                                            }
-
-                                            ThemeSwitch {
-                                                text: ""
-                                                checked: root.followPalette
-                                                onToggled: root.followPalette = checked
-                                            }
-                                        }
-
-                                        ActionButton {
-                                            text: "Use the default app colours"
-                                            enabled: root.followPalette
-                                            onClicked: root.followPalette = false
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                            radius: 10
-                            color: colors.panel
-                                    border.width: 1
-                                    border.color: colors.border
-                                    implicitHeight: backupColumn.implicitHeight + 30
-
-                                    ColumnLayout {
-                                        id: backupColumn
-                                        anchors.fill: parent
-                                        anchors.margins: 16
-                                        spacing: 8
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-
-                                            Text {
-                                                text: "BACKUPS"
-                                                color: colors.muted
-                                                font.pixelSize: 9
-                                                font.letterSpacing: 0.5
-                                                font.weight: Font.DemiBold
-                                            }
-
-                                            Item { Layout.fillWidth: true }
-
-                                            ActionButton {
-                                                text: "Refresh"
-                                                iconSource: "qrc:/data/icons/refresh.svg"
-                                                onClicked: root.refreshBackups()
-                                            }
-
-                                            ActionButton {
-                                                text: "Restore last"
-                                                enabled: root.backupList.length > 0
-                                                danger: true
-                                                onClicked: root.rollbackBackup(root.backupList[0])
-                                            }
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            visible: root.backupList.length === 0
-                                            text: "No backups yet. HyperThemes creates one before its first write."
-                                            color: colors.muted
-                                            font.pixelSize: 11
-                                            wrapMode: Text.WordWrap
-                                        }
-
-                                        Repeater {
-                                            model: root.backupList
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                spacing: 8
-
-                                                Text {
-                                                    Layout.fillWidth: true
-                                                    text: modelData
-                                                    color: colors.muted
-                                                    font.pixelSize: 11
-                                                    elide: Text.ElideRight
-                                                }
-
-                                                ActionButton {
-                                                    text: "Restore"
-                                                    onClicked: root.rollbackBackup(modelData)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                            radius: 10
-                            color: colors.panel
-                                    border.width: 1
-                                    border.color: colors.border
-                                    implicitHeight: runtimeColumn.implicitHeight + 30
-
-                                    ColumnLayout {
-                                        id: runtimeColumn
-                                        anchors.fill: parent
-                                        anchors.margins: 16
-                                        spacing: 6
-
-                                        Text {
-                                            text: "RUNTIME"
-                                            color: colors.muted
-                                            font.pixelSize: 9
-                                        font.letterSpacing: 0.5
-                                        font.weight: Font.DemiBold
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "Matugen: " + (PaletteGenerator.available() ? PaletteGenerator.version() : "not installed")
-                                            color: PaletteGenerator.available() ? colors.success : colors.danger
-                                            font.pixelSize: 11
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "System-wide writes use pkexec and are limited to the KDE color scheme. User targets stay in XDG config and data directories."
-                                            color: colors.muted
-                                            font.pixelSize: 11
-                                            wrapMode: Text.WordWrap
-                                        }
-                                    }
-                                }
-
-                                Item { Layout.fillHeight: true }
-                            }
+                            active: root.page === "settings"
+                            sourceComponent: settingsPageComponent
                         }
                     }
+
                     Item {
                         anchors.fill: parent
                         visible: root.page === "categories"
-                        ScrollView {
+
+                        Loader {
                             anchors.fill: parent
-                            contentWidth: availableWidth
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
-
-                            ColumnLayout {
-                                width: Math.max(320, parent.width - 10)
-                                spacing: 14
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.topMargin: 4
-
-                                    Text {
-                                        text: "COLLECTIONS"
-                                        color: colors.muted
-                                        font.pixelSize: 9
-                                        font.letterSpacing: 0.5
-                                        font.weight: Font.DemiBold
-                                    }
-
-                                    Item { Layout.fillWidth: true }
-
-                                    Text {
-                                        text: root.categoryTile("collection").length + " sources"
-                                        color: colors.faint
-                                        font.pixelSize: 10
-                                    }
-                                }
-
-                                Grid {
-                                    Layout.fillWidth: true
-                                    columns: Math.max(1, Math.floor(width / 228))
-                                    columnSpacing: 12
-                                    rowSpacing: 12
-
-                                    Repeater {
-                                        model: root.categoryTile("collection")
-
-                                        CategoryTile {
-                                            paletteColors: root.uiColors
-                                            onActivated: root.openCollection(root.modelData.value)
-                                        }
-                                    }
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.topMargin: 6
-
-                                    Text {
-                                        text: "THEME FAMILIES"
-                                        color: colors.muted
-                                        font.pixelSize: 9
-                                        font.letterSpacing: 0.5
-                                        font.weight: Font.DemiBold
-                                    }
-
-                                    Item { Layout.fillWidth: true }
-
-                                    Text {
-                                        text: root.categoryTile("family").length + " families"
-                                        color: colors.faint
-                                        font.pixelSize: 10
-                                    }
-                                }
-
-                                Text {
-                                    Layout.fillWidth: true
-                                    visible: root.categoryTile("family").length === 0
-                                    text: "No named families in the catalog yet."
-                                    color: colors.muted
-                                    font.pixelSize: 11
-                                }
-
-                                Grid {
-                                    Layout.fillWidth: true
-                                    columns: Math.max(1, Math.floor(width / 228))
-                                    columnSpacing: 12
-                                    rowSpacing: 12
-
-                                    Repeater {
-                                        model: root.categoryTile("family")
-
-                                        CategoryTile {
-                                            paletteColors: root.uiColors
-                                            onActivated: root.openCategory(root.modelData.value)
-                                        }
-                                    }
-                                }
-
-                                Item { Layout.preferredHeight: 8 }
-                            }
+                            active: root.page === "categories"
+                            sourceComponent: categoriesPageComponent
                         }
                     }
 
@@ -3271,9 +2661,19 @@ ApplicationWindow {
                         anchors.fill: parent
                         visible: root.page === "shell"
 
-                        ShellBuilderPage {
+                        Component {
+                            id: shellPageComponent
+
+                            ShellBuilderPage {
+                                anchors.fill: parent
+                                app: root
+                            }
+                        }
+
+                        Loader {
                             anchors.fill: parent
-                            app: root
+                            active: root.page === "shell"
+                            sourceComponent: shellPageComponent
                         }
                     }
                 }
@@ -3556,6 +2956,126 @@ ApplicationWindow {
                             }
 
                             Item { Layout.fillWidth: true }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 1
+                            color: colors.border
+                        }
+
+                        Text {
+                            text: "POINTER"
+                            color: colors.muted
+                            font.pixelSize: 9
+                            font.letterSpacing: 0.5
+                            font.weight: Font.DemiBold
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Size"
+                                color: colors.text
+                                font.pixelSize: 11
+                            }
+
+                            Text {
+                                text: Applier.cursorSize + " px"
+                                color: colors.accent
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+                        }
+
+                        Slider {
+                            id: pointerSizeSlider
+                            objectName: "pointerSizeSlider"
+                            Layout.fillWidth: true
+                            from: 16
+                            to: 128
+                            stepSize: 1
+                            value: Applier.cursorSize
+                            enabled: root.hasPalette(root.selected)
+                            onMoved: Applier.cursorSize = Math.round(value)
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Every pointer is drawn from this palette. The chosen size is embedded in the cursor files and used when a running session is switched."
+                            color: colors.faint
+                            font.pixelSize: 9
+                            wrapMode: Text.WordWrap
+                        }
+
+                        GridLayout {
+                            id: pointerGrid
+                            objectName: "pointerGrid"
+                            Layout.fillWidth: true
+                            columns: 4
+                            rowSpacing: 6
+                            columnSpacing: 6
+
+                            Repeater {
+                                model: root.pointerShapes
+
+                                ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: 2
+
+                                    Rectangle {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        Layout.preferredWidth: 46
+                                        Layout.preferredHeight: 46
+                                        radius: 8
+                                        color: colors.panel2
+
+                                        PointerShape {
+                                            anchors.fill: parent
+                                            anchors.margins: 6
+                                            shape: modelData.id
+                                            themePalette: root.selected ? root.selected.palette : ({})
+                                            size: Applier.cursorSize
+                                        }
+
+                                        ToolTip {
+                                            visible: pointerHover.hovered
+                                            delay: 150
+                                            text: modelData.label + "  ·  hotspot " + modelData.hotspotX + ","
+                                                  + modelData.hotspotY + "  ·  " + Applier.cursorSize + " px"
+                                        }
+
+                                        HoverHandler { id: pointerHover }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.label
+                                        color: colors.faint
+                                        font.pixelSize: 8
+                                        horizontalAlignment: Text.AlignHCenter
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.pointerShapes.length + " shapes  ·  hotspot in a 24 px design box"
+                            color: colors.faint
+                            font.pixelSize: 9
+                        }
+
+                        ActionButton {
+                            Layout.fillWidth: true
+                            text: "Apply pointer only"
+                            enabled: !root.busy && root.selected && root.hasPalette(root.selected)
+                            onClicked: root.applyPointer()
                         }
 
                         Text {
@@ -4091,6 +3611,805 @@ ApplicationWindow {
                     TapHandler { onTapped: root.compareTheme = modelData }
                 }
             }
+        }
+    }
+
+    Component {
+        id: dynamicPageComponent
+
+        Item {
+            anchors.fill: parent
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    spacing: 14
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 16
+
+                        Rectangle {
+                            Layout.preferredWidth: 300
+                            Layout.maximumWidth: 340
+                            Layout.preferredHeight: 200
+                            radius: 12
+                            color: colors.panel2
+                            border.width: 1
+                            border.color: colors.border
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                source: root.wallpaperUrl
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                visible: source !== "" && status !== Image.Error
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+                                visible: root.wallpaperUrl === ""
+                                text: "Choose a wallpaper\nto extract a palette"
+                                color: colors.faint
+                                font.pixelSize: 12
+                                horizontalAlignment: Text.AlignHCenter
+                                lineHeight: 1.3
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            Text {
+                                text: "WALLPAPER"
+                                color: colors.muted
+                                font.pixelSize: 9
+                    font.letterSpacing: 0.5
+                    font.weight: Font.DemiBold
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.wallpaperPath || "No image selected"
+                                color: colors.muted
+                                font.pixelSize: 11
+                                elide: Text.ElideMiddle
+                            }
+
+                            Flow {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                ActionButton {
+                                    text: "Choose image"
+                                    iconSource: "qrc:/data/icons/image.svg"
+                                    onClicked: root.chooseWallpaper()
+                                }
+
+                                ActionButton {
+                                    text: "Generate palette"
+                                    iconSource: "qrc:/data/icons/palette.svg"
+                                    primary: true
+                                    enabled: !root.busy && root.wallpaperPath !== ""
+                                    onClicked: root.generateDynamic()
+                                }
+
+                                ActionButton {
+                                    text: "Set wallpaper"
+                                    iconSource: "qrc:/data/icons/image.svg"
+                                    enabled: !root.busy && root.wallpaperPath !== ""
+                                    onClicked: root.applyWallpaperSelection()
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: root.dynamicError
+                                visible: root.dynamicError !== ""
+                                color: colors.danger
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Matugen writes no files here: HyperThemes asks it for the palette, then applies the targets you choose. Your wallpaper is remembered between launches."
+                                color: colors.faint
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        radius: 12
+                        color: colors.panel
+                        border.width: 1
+                        border.color: colors.border
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 18
+                            spacing: 12
+
+                            Text {
+                                text: "PALETTE OPTIONS"
+                                color: colors.muted
+                                font.pixelSize: 9
+                    font.letterSpacing: 0.5
+                    font.weight: Font.DemiBold
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 16
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+
+                                    Text {
+                                        text: "Mode"
+                                        color: colors.muted
+                                        font.pixelSize: 11
+                                    }
+
+                                    ComboBox {
+                                        Layout.fillWidth: true
+                                        model: ["Dark", "Light"]
+                                        Layout.preferredHeight: 32
+                                        onActivated: function(index) {
+                                            root.dynamicMode = index === 0 ? "dark" : "light";
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+
+                                    Text {
+                                        text: "Scheme"
+                                        color: colors.muted
+                                        font.pixelSize: 11
+                                    }
+
+                                    ComboBox {
+                                        Layout.fillWidth: true
+                                        model: ["Tonal spot", "Vibrant", "Expressive", "Content", "Fidelity", "Monochrome", "Neutral", "Rainbow", "Fruit salad", "Smart"]
+                                        Layout.preferredHeight: 32
+                                        onActivated: function(index) {
+                                            var values = ["scheme-tonal-spot", "scheme-vibrant", "scheme-expressive", "scheme-content", "scheme-fidelity", "scheme-monochrome", "scheme-neutral", "scheme-rainbow", "scheme-fruit-salad", "scheme-smart"];
+                                            root.dynamicScheme = values[index];
+                                        }
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Text {
+                                    text: "Contrast"
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                }
+
+                                Slider {
+                                    Layout.fillWidth: true
+                                    from: -1
+                                    to: 1
+                                    stepSize: 0.05
+                                    value: root.dynamicContrast
+                                    onMoved: root.dynamicContrast = value
+                                }
+
+                                Text {
+                                    text: root.dynamicContrast.toFixed(2)
+                                    color: colors.faint
+                                    font.pixelSize: 10
+                                }
+                            }
+
+                            Item { Layout.fillHeight: true }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 6
+                                visible: root.dynamicTheme !== null
+
+                                Repeater {
+                                    model: ["primary", "secondary", "tertiary", "surface", "surfaceContainerHigh", "error"]
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 34
+                                        radius: 7
+                                        color: root.dynamicTheme ? root.colorFrom(root.dynamicTheme, modelData, "#333039") : "#333039"
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.dynamicTheme !== null
+                                text: "The generated palette is selected on the right. Choose targets and apply it."
+                                color: colors.faint
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    Component {
+        id: layoutsPageComponent
+
+        Item {
+            anchors.fill: parent
+
+                ScrollView {
+                    anchors.fill: parent
+                    contentWidth: availableWidth
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                    ColumnLayout {
+                        width: Math.max(320, parent.width - 8)
+                        spacing: 12
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                    radius: 10
+                    color: colors.panel
+                            border.width: 1
+                            border.color: colors.border
+                            implicitHeight: layoutIntro.implicitHeight + 30
+
+                            ColumnLayout {
+                                id: layoutIntro
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 6
+
+                                Text {
+                                    text: "PANEL LAYOUTS"
+                                    color: colors.muted
+                                    font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Caelestia presets merge into shell.json and keep your general, service and lock settings. KDE presets replace the current Plasma panels through Plasma's scripting API. Both paths take a backup first."
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+
+                        Repeater {
+                            model: root.layoutPresets
+
+                            Rectangle {
+                                required property var modelData
+
+                                Layout.fillWidth: true
+                            radius: 10
+                            color: colors.panel
+                                border.width: 1
+                                border.color: colors.border
+                                implicitHeight: layoutCard.implicitHeight + 30
+
+                                ColumnLayout {
+                                    id: layoutCard
+                                    anchors.fill: parent
+                                    anchors.margins: 16
+                                    spacing: 8
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Pill {
+                                            text: modelData.targetLabel
+                                            background: colors.elevated
+                                            foreground: colors.accent
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData.name
+                                            color: colors.text
+                                            font.pixelSize: 14
+                                            font.weight: Font.DemiBold
+                                            elide: Text.ElideRight
+                                        }
+
+                                        ActionButton {
+                                            text: "Apply layout"
+                                            iconSource: "qrc:/data/icons/check.svg"
+                                            primary: true
+                                            onClicked: root.applyLayout(modelData.id)
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.description
+                                        color: colors.muted
+                                        font.pixelSize: 11
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        height: 38
+                                        radius: 8
+                                        color: colors.bg
+
+                                        Rectangle {
+                                            width: parent.width * 0.72
+                                            height: 9
+                                            radius: 4
+                                            color: colors.accent
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            y: String(modelData.id).indexOf("bottom") >= 0 ? parent.height - height - 6 : 6
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.layoutError !== ""
+                            text: root.layoutError
+                            color: colors.danger
+                            font.pixelSize: 11
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            model: root.layoutWarnings
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "• " + modelData
+                                color: "#d8b26a"
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                    radius: 10
+                    color: colors.panel
+                            border.width: 1
+                            border.color: colors.border
+                            implicitHeight: layoutBackupColumn.implicitHeight + 30
+
+                            ColumnLayout {
+                                id: layoutBackupColumn
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 8
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+
+                                    Text {
+                                        text: "LAYOUT BACKUPS"
+                                        color: colors.muted
+                                        font.pixelSize: 9
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    ActionButton {
+                                        text: "Restore last"
+                                        enabled: root.layoutBackups.length > 0
+                                        danger: true
+                                        onClicked: root.restoreLayout(root.layoutBackups[0])
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: root.layoutBackups.length === 0
+                                    text: "No layout backups yet."
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                }
+
+                                Repeater {
+                                    model: root.layoutBackups
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData
+                                            color: colors.muted
+                                            font.pixelSize: 11
+                                            elide: Text.ElideRight
+                                        }
+
+                                        ActionButton {
+                                            text: "Restore"
+                                            onClicked: root.restoreLayout(modelData)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillHeight: true }
+                    }
+                }
+        }
+    }
+
+    Component {
+        id: settingsPageComponent
+
+        Item {
+            anchors.fill: parent
+
+                ScrollView {
+                    anchors.fill: parent
+                    contentWidth: availableWidth
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                    ColumnLayout {
+                        width: Math.max(320, parent.width - 8)
+                        spacing: 14
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                    radius: 10
+                    color: colors.panel
+                            border.width: 1
+                            border.color: colors.border
+                            implicitHeight: sourceColumn.implicitHeight + 30
+
+                            ColumnLayout {
+                                id: sourceColumn
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 8
+
+                                Text {
+                                    text: "SOURCES"
+                                    color: colors.muted
+                                    font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "The catalog ships with bundled Caelestia schemes and Base16 palettes. Local imports read Caelestia scheme files, KDE .colors files, and HyperThemes JSON. KDE Store and GitHub entries download on demand; archives are inspected for a palette or a Plasma package before anything touches your configuration."
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 8
+
+                                    ActionButton {
+                                        text: "Import Caelestia schemes"
+                                        enabled: LocalSource.defaultCaelestiaDir() !== ""
+                                        onClicked: root.importPath(LocalSource.defaultCaelestiaDir())
+                                    }
+
+                                    ActionButton {
+                                        text: "Import KDE colors"
+                                        onClicked: root.importPath(LocalSource.defaultKdeColorDir())
+                                    }
+
+                                    ActionButton {
+                                        text: "Import folder…"
+                                        onClicked: importDialog.open()
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                    radius: 10
+                    color: colors.panel
+                            border.width: 1
+                            border.color: colors.border
+                            implicitHeight: appearanceColumn.implicitHeight + 30
+
+                            ColumnLayout {
+                                id: appearanceColumn
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 8
+
+                                Text {
+                                    text: "APPEARANCE"
+                                    color: colors.muted
+                                    font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 2
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Match the app to the selected palette"
+                                            color: colors.text
+                                            font.pixelSize: 12
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Surfaces, text, accents, controls and this panel follow the theme you pick. Turn it off for the original dark shell."
+                                            color: colors.muted
+                                            font.pixelSize: 10
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+
+                                    ThemeSwitch {
+                                        text: ""
+                                        checked: root.followPalette
+                                        onToggled: root.followPalette = checked
+                                    }
+                                }
+
+                                ActionButton {
+                                    text: "Use the default app colours"
+                                    enabled: root.followPalette
+                                    onClicked: root.followPalette = false
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                    radius: 10
+                    color: colors.panel
+                            border.width: 1
+                            border.color: colors.border
+                            implicitHeight: backupColumn.implicitHeight + 30
+
+                            ColumnLayout {
+                                id: backupColumn
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 8
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+
+                                    Text {
+                                        text: "BACKUPS"
+                                        color: colors.muted
+                                        font.pixelSize: 9
+                                        font.letterSpacing: 0.5
+                                        font.weight: Font.DemiBold
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    ActionButton {
+                                        text: "Refresh"
+                                        iconSource: "qrc:/data/icons/refresh.svg"
+                                        onClicked: root.refreshBackups()
+                                    }
+
+                                    ActionButton {
+                                        text: "Restore last"
+                                        enabled: root.backupList.length > 0
+                                        danger: true
+                                        onClicked: root.rollbackBackup(root.backupList[0])
+                                    }
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: root.backupList.length === 0
+                                    text: "No backups yet. HyperThemes creates one before its first write."
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Repeater {
+                                    model: root.backupList
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData
+                                            color: colors.muted
+                                            font.pixelSize: 11
+                                            elide: Text.ElideRight
+                                        }
+
+                                        ActionButton {
+                                            text: "Restore"
+                                            onClicked: root.rollbackBackup(modelData)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                    radius: 10
+                    color: colors.panel
+                            border.width: 1
+                            border.color: colors.border
+                            implicitHeight: runtimeColumn.implicitHeight + 30
+
+                            ColumnLayout {
+                                id: runtimeColumn
+                                anchors.fill: parent
+                                anchors.margins: 16
+                                spacing: 6
+
+                                Text {
+                                    text: "RUNTIME"
+                                    color: colors.muted
+                                    font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Matugen: " + (PaletteGenerator.available() ? PaletteGenerator.version() : "not installed")
+                                    color: PaletteGenerator.available() ? colors.success : colors.danger
+                                    font.pixelSize: 11
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "System-wide writes use pkexec and are limited to the KDE color scheme. User targets stay in XDG config and data directories."
+                                    color: colors.muted
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillHeight: true }
+                    }
+                }
+        }
+    }
+
+    Component {
+        id: categoriesPageComponent
+
+        Item {
+            anchors.fill: parent
+
+                ScrollView {
+                    anchors.fill: parent
+                    contentWidth: availableWidth
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                    ColumnLayout {
+                        width: Math.max(320, parent.width - 10)
+                        spacing: 14
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 4
+
+                            Text {
+                                text: "COLLECTIONS"
+                                color: colors.muted
+                                font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Text {
+                                text: root.categoryTile("collection").length + " sources"
+                                color: colors.faint
+                                font.pixelSize: 10
+                            }
+                        }
+
+                        Grid {
+                            Layout.fillWidth: true
+                            columns: Math.max(1, Math.floor(width / 228))
+                            columnSpacing: 12
+                            rowSpacing: 12
+
+                            Repeater {
+                                model: root.categoryTile("collection")
+
+                                CategoryTile {
+                                    paletteColors: root.uiColors
+                                    onActivated: root.openCollection(root.modelData.value)
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: 6
+
+                            Text {
+                                text: "THEME FAMILIES"
+                                color: colors.muted
+                                font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Text {
+                                text: root.categoryTile("family").length + " families"
+                                color: colors.faint
+                                font.pixelSize: 10
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.categoryTile("family").length === 0
+                            text: "No named families in the catalog yet."
+                            color: colors.muted
+                            font.pixelSize: 11
+                        }
+
+                        Grid {
+                            Layout.fillWidth: true
+                            columns: Math.max(1, Math.floor(width / 228))
+                            columnSpacing: 12
+                            rowSpacing: 12
+
+                            Repeater {
+                                model: root.categoryTile("family")
+
+                                CategoryTile {
+                                    paletteColors: root.uiColors
+                                    onActivated: root.openCategory(root.modelData.value)
+                                }
+                            }
+                        }
+
+                        Item { Layout.preferredHeight: 8 }
+                    }
+                }
         }
     }
 }

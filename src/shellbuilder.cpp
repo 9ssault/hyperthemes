@@ -251,6 +251,111 @@ RowLayout {
 }
 )QML");
     }
+    if (id == QLatin1String("uptime")) {
+        return QStringLiteral(R"QML(
+RowLayout {
+    spacing: 4
+
+    Text {
+        id: uptimeLabel
+        text: "up …"
+        color: theme.muted
+        font.family: theme.fontFamily
+        font.pixelSize: theme.fontSize - 1
+    }
+
+    Process {
+        id: uptimeProcess
+        command: ["sh", "-c", "cut -d. -f1 /proc/uptime"]
+        running: true
+        stdout: SplitParser {
+            onRead: function(data) {
+                var seconds = parseInt(String(data).trim(), 10);
+                if (isNaN(seconds))
+                    return;
+                var hours = Math.floor(seconds / 3600);
+                var minutes = Math.floor((seconds % 3600) / 60);
+                uptimeLabel.text = "up " + hours + "h " + minutes + "m";
+            }
+        }
+    }
+
+    Timer {
+        interval: 60000
+        running: true
+        repeat: true
+        onTriggered: uptimeProcess.running = true
+    }
+}
+)QML");
+    }
+    if (id == QLatin1String("notifications")) {
+        return QStringLiteral(R"QML(
+RowLayout {
+    spacing: 4
+    visible: bar.notificationCount > 0
+
+    Text {
+        text: "🔔"
+        color: theme.muted
+        font.pixelSize: theme.fontSize - 1
+    }
+
+    Text {
+        text: bar.notificationCount
+        color: theme.text
+        font.family: theme.fontFamily
+        font.pixelSize: theme.fontSize - 1
+    }
+
+    HoverHandler {
+        id: notificationHover
+        cursorShape: Qt.PointingHandCursor
+    }
+    ToolTip.visible: notificationHover.hovered
+    ToolTip.text: bar.notificationSummary()
+
+    TapHandler { onTapped: bar.notificationsRequested() }
+}
+)QML");
+    }
+    if (id == QLatin1String("memory")) {
+        return QStringLiteral(R"QML(
+RowLayout {
+    spacing: 4
+
+    Text {
+        id: memoryLabel
+        text: "mem …"
+        color: theme.muted
+        font.family: theme.fontFamily
+        font.pixelSize: theme.fontSize - 1
+    }
+
+    Process {
+        id: memoryProcess
+        command: ["sh", "-c",
+                  "awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{print int((t-a)/1024)}" +
+                  " /proc/meminfo"]
+        running: true
+        stdout: SplitParser {
+            onRead: function(data) {
+                var used = parseInt(String(data).trim(), 10);
+                if (!isNaN(used))
+                    memoryLabel.text = "mem " + used + " MB";
+            }
+        }
+    }
+
+    Timer {
+        interval: 5000
+        running: true
+        repeat: true
+        onTriggered: memoryProcess.running = true
+    }
+}
+)QML");
+    }
     if (id == QLatin1String("launcher")) {
         return QStringLiteral(R"QML(
 Rectangle {
@@ -731,6 +836,8 @@ QString barFile(const Config &config)
         text += QStringLiteral("import Quickshell.Bluetooth\n");
     if (usesWidget(config, QStringLiteral("systemLoad")))
         text += QStringLiteral("import Quickshell.Io\n");
+    if (usesWidget(config, QStringLiteral("notifications")))
+        text += QStringLiteral("import Quickshell.Services.Notifications\n");
     if (usesWidget(config, QStringLiteral("workspaces")) && config.compositor == QLatin1String("hyprland"))
         text += QStringLiteral("import Quickshell.Hyprland\n");
     if (usesWidget(config, QStringLiteral("workspaces")) && config.compositor == QLatin1String("sway"))
@@ -740,7 +847,31 @@ QString barFile(const Config &config)
     text += QStringLiteral("    id: bar\n\n");
     text += QStringLiteral("    required property var theme\n");
     text += QStringLiteral("    signal launcherRequested()\n");
-    text += QStringLiteral("    signal dashboardRequested()\n\n");
+    text += QStringLiteral("    signal dashboardRequested()\n");
+    if (usesWidget(config, QStringLiteral("notifications")))
+        text += QStringLiteral("    signal notificationsRequested()\n");
+    if (usesWidget(config, QStringLiteral("notifications"))) {
+        text += QStringLiteral("\n");
+        text += QStringLiteral("    readonly property var notificationList: notificationServer.trackedNotifications\n");
+        text += QStringLiteral("    readonly property int notificationCount: notificationList ? notificationList.values.length : 0\n");
+        text += QStringLiteral("    function notificationSummary() {\n");
+        text += QStringLiteral("        var list = notificationList ? notificationList.values : [];\n");
+        text += QStringLiteral("        var lines = [];\n");
+        text += QStringLiteral("        for (var i = 0; i < list.length && i < 4; ++i)\n");
+        text += QStringLiteral("            lines.push(String(list[i].summary || list[i].body || list[i].appName || \"Notification\"));\n");
+        text += QStringLiteral("        if (list.length > 4)\n");
+        text += QStringLiteral("            lines.push(\"+\" + (list.length - 4) + \" more\");\n");
+        text += QStringLiteral("        return lines.join(\"\\n\");\n");
+        text += QStringLiteral("    }\n\n");
+        text += QStringLiteral("    NotificationServer {\n");
+        text += QStringLiteral("        id: notificationServer\n");
+        text += QStringLiteral("        keepOnReload: true\n");
+        text += QStringLiteral("        bodySupported: true\n");
+        text += QStringLiteral("        imageSupported: true\n");
+        text += QStringLiteral("        actionsSupported: true\n");
+        text += QStringLiteral("    }\n");
+    }
+    text += QStringLiteral("\n");
     text += QStringLiteral("    model: theme.monitors.length > 0\n");
     text += QStringLiteral("        ? Quickshell.screens.filter(function(screen) { return theme.hasBar(screen.name); })\n");
     text += QStringLiteral("        : (theme.barPerMonitor\n");
@@ -1169,8 +1300,192 @@ QString dashboardFile(const Config &config)
     return text;
 }
 
+QString notificationsFile(const Config &config)
+{
+    const bool bottom = config.position == QLatin1String("bottom");
+    const QString edges = bottom ? QStringLiteral("        bottom: true\n        right: true\n")
+                                 : QStringLiteral("        top: true\n        right: true\n");
+    const QString insets = bottom
+        ? QStringLiteral("        bottom: theme.barHeight + theme.margin * 2\n        right: theme.margin\n")
+        : QStringLiteral("        top: theme.barHeight + theme.margin * 2\n        right: theme.margin\n");
+
+    QString text = QStringLiteral(R"QML(// Generated by HyperThemes for Quickshell.
+// Toggle it with: qs ipc call notifications toggle
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Quickshell
+import Quickshell.Wayland
+
+PanelWindow {
+    id: notifications
+
+    required property var theme
+    property var tracked
+
+    readonly property var list: tracked ? tracked.values : []
+
+    visible: false
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+    WlrLayershell.namespace: "hyperthemes-notifications"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+    focusable: true
+    screen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
+    implicitWidth: 380
+    implicitHeight: Math.min(420, screen ? screen.height - theme.barHeight - theme.margin * 3 : 420)
+    anchors {
+%1    }
+    margins {
+%2    }
+
+    function toggle() {
+        visible = !visible;
+    }
+
+    IpcHandler {
+        target: "notifications"
+        function toggle() { notifications.visible = !notifications.visible; }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        onActivated: notifications.visible = false
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: theme.radius * 2
+        color: Qt.rgba(theme.surface.r, theme.surface.g, theme.surface.b, Math.max(0.94, theme.opacity))
+        border.width: 1
+        border.color: theme.surfaceHigh
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    text: notifications.list.length > 0
+                        ? "Notifications · " + notifications.list.length
+                        : "Notifications"
+                    color: theme.text
+                    font.family: theme.fontFamily
+                    font.pixelSize: theme.fontSize + 1
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text: "✕"
+                    color: theme.muted
+                    font.pixelSize: theme.fontSize + 1
+                    TapHandler { onTapped: notifications.visible = false }
+                }
+            }
+
+            Text {
+                visible: notifications.list.length === 0
+                Layout.fillWidth: true
+                text: "Nothing to show"
+                color: theme.muted
+                font.family: theme.fontFamily
+                font.pixelSize: theme.fontSize
+            }
+
+            Flickable {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: notifications.list.length > 0
+                contentHeight: entryColumn.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                ScrollBar.vertical: ScrollBar {}
+
+                ColumnLayout {
+                    id: entryColumn
+                    width: parent.width
+                    spacing: 8
+
+                    Repeater {
+                        model: notifications.list
+
+                        delegate: Rectangle {
+                            id: entry
+
+                            required property var modelData
+                            required property int index
+
+                            readonly property string origin: String(modelData.appName || "")
+                            readonly property string heading: String(modelData.summary || modelData.body || "Notification")
+                            readonly property string detail: String(modelData.body || "")
+
+                            Layout.fillWidth: true
+                            implicitHeight: entryLayout.implicitHeight + 20
+                            radius: theme.radius
+                            color: theme.surfaceHigh
+
+                            ColumnLayout {
+                                id: entryLayout
+                                anchors.fill: parent
+                                anchors.margins: 10
+                                spacing: 3
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: entry.origin.length > 0 ? entry.origin : "Notification"
+                                    color: theme.muted
+                                    font.family: theme.fontFamily
+                                    font.pixelSize: theme.fontSize - 2
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: entry.heading
+                                    color: theme.text
+                                    font.family: theme.fontFamily
+                                    font.pixelSize: theme.fontSize
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    visible: entry.detail.length > 0 && entry.detail !== entry.heading
+                                    text: entry.detail
+                                    color: theme.muted
+                                    font.family: theme.fontFamily
+                                    font.pixelSize: theme.fontSize - 1
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 3
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+)QML");
+    text.replace(QStringLiteral("%1"), edges);
+    text.replace(QStringLiteral("%2"), insets);
+    return text;
+}
+
 QString shellFile(const Config &config)
 {
+    const bool notifications = usesWidget(config, QStringLiteral("notifications"));
     QString text;
     text += QStringLiteral("// Generated by HyperThemes for Quickshell.\n");
     text += QStringLiteral("// Run it with: qs -c %1\n").arg(config.name);
@@ -1181,6 +1496,8 @@ QString shellFile(const Config &config)
         text += QStringLiteral("import \"launcher\"\n");
     if (config.dashboard)
         text += QStringLiteral("import \"dashboard\"\n");
+    if (notifications)
+        text += QStringLiteral("import \"notifications\"\n");
     text += QStringLiteral("\n");
     text += QStringLiteral("ShellRoot {\n");
     text += QStringLiteral("    Theme { id: theme }\n\n");
@@ -1189,12 +1506,22 @@ QString shellFile(const Config &config)
     if (config.dashboard)
         text += QStringLiteral("    Dashboard { id: dashboard; theme: theme }\n");
     text += QStringLiteral("    Bar {\n");
+    text += QStringLiteral("        id: bar\n");
     text += QStringLiteral("        theme: theme\n");
     if (config.launcher)
         text += QStringLiteral("        onLauncherRequested: launcher.toggle()\n");
     if (config.dashboard)
         text += QStringLiteral("        onDashboardRequested: dashboard.toggle()\n");
+    if (notifications)
+        text += QStringLiteral("        onNotificationsRequested: notifications.toggle()\n");
     text += QStringLiteral("    }\n");
+    if (notifications) {
+        text += QStringLiteral("    Notifications {\n");
+        text += QStringLiteral("        id: notifications\n");
+        text += QStringLiteral("        theme: theme\n");
+        text += QStringLiteral("        tracked: bar.notificationList\n");
+        text += QStringLiteral("    }\n");
+    }
     text += QStringLiteral("}\n");
     return text;
 }
@@ -1220,6 +1547,10 @@ QString readmeFile(const Config &config)
         text += QStringLiteral("- `dashboard/Dashboard.qml` — clock, media, battery and session actions.\n");
         text += QStringLiteral("  Toggle it with `qs ipc call dashboard toggle`.\n");
     }
+    if (usesWidget(config, QStringLiteral("notifications"))) {
+        text += QStringLiteral("- `notifications/Notifications.qml` — the tray the notification widget opens.\n");
+        text += QStringLiteral("  Toggle it with `qs ipc call notifications toggle`; it follows the bar's edge.\n");
+    }
     text += QStringLiteral("\n## Notes\n\n");
     text += QStringLiteral("- `Theme.qml` is the supported place to retune the generated shell; a rebuild from HyperThemes overwrites it.\n");
     text += QStringLiteral("- The bar uses `Variants` over `Quickshell.screens`; turn on **Bar on every monitor** in HyperThemes to show one per display.\n");
@@ -1230,7 +1561,10 @@ QString readmeFile(const Config &config)
     else
         text += QStringLiteral("- Workspaces are placeholders; rebuild with a Hyprland or Sway/i3 compositor to wire them to real workspaces.\n");
     text += QStringLiteral("- Every rewrite made by HyperThemes backs up the previous folder under `~/.local/state/hyperthemes/shell-backups/`.\n");
-    text += QStringLiteral("- Validate after editing with `qmllint shell.qml Theme.qml bar/Bar.qml`.\n");
+    QString lint = QStringLiteral("shell.qml Theme.qml bar/Bar.qml");
+    if (usesWidget(config, QStringLiteral("notifications")))
+        lint += QStringLiteral(" notifications/Notifications.qml");
+    text += QStringLiteral("- Validate after editing with `qmllint %1`.\n").arg(lint);
     return text;
 }
 
@@ -1242,7 +1576,8 @@ QStringList knownWidgets()
         QStringLiteral("volume"), QStringLiteral("network"), QStringLiteral("bluetooth"),
         QStringLiteral("tray"), QStringLiteral("battery"), QStringLiteral("statusIcons"),
         QStringLiteral("power"), QStringLiteral("separator"), QStringLiteral("spacer"),
-        QStringLiteral("systemLoad"),
+        QStringLiteral("systemLoad"), QStringLiteral("uptime"), QStringLiteral("memory"),
+        QStringLiteral("notifications"),
     };
 }
 
@@ -1492,6 +1827,12 @@ QVariantList ShellBuilder::widgets() const
         {QStringLiteral("battery"), QStringLiteral("Battery")},
         {QStringLiteral("statusIcons"), QStringLiteral("Status icons")},
         {QStringLiteral("power"), QStringLiteral("Power")},
+        {QStringLiteral("separator"), QStringLiteral("Separator")},
+        {QStringLiteral("spacer"), QStringLiteral("Spacer")},
+        {QStringLiteral("systemLoad"), QStringLiteral("System load")},
+        {QStringLiteral("uptime"), QStringLiteral("Uptime")},
+        {QStringLiteral("memory"), QStringLiteral("Memory")},
+        {QStringLiteral("notifications"), QStringLiteral("Notifications")},
     };
 
     QVariantList result;
@@ -1599,6 +1940,8 @@ QVariantMap ShellBuilder::build(const QVariantMap &config)
         files.append({QStringLiteral("launcher/Launcher.qml"), launcherFile(parsed)});
     if (parsed.dashboard)
         files.append({QStringLiteral("dashboard/Dashboard.qml"), dashboardFile(parsed)});
+    if (usesWidget(parsed, QStringLiteral("notifications")))
+        files.append({QStringLiteral("notifications/Notifications.qml"), notificationsFile(parsed)});
 
     // Drop optional modules that are switched off, so the folder matches the
     // configuration instead of keeping stale files from an earlier build.
@@ -1609,6 +1952,10 @@ QVariantMap ShellBuilder::build(const QVariantMap &config)
     if (!parsed.dashboard) {
         QFile::remove(dir + QStringLiteral("/dashboard/Dashboard.qml"));
         QDir().rmdir(dir + QStringLiteral("/dashboard"));
+    }
+    if (!usesWidget(parsed, QStringLiteral("notifications"))) {
+        QFile::remove(dir + QStringLiteral("/notifications/Notifications.qml"));
+        QDir().rmdir(dir + QStringLiteral("/notifications"));
     }
 
     QStringList written;
@@ -1931,6 +2278,8 @@ QVariantMap ShellBuilder::lint(const QString &name)
         files << QStringLiteral("launcher/Launcher.qml");
     if (QFileInfo::exists(dir + QStringLiteral("/dashboard/Dashboard.qml")))
         files << QStringLiteral("dashboard/Dashboard.qml");
+    if (QFileInfo::exists(dir + QStringLiteral("/notifications/Notifications.qml")))
+        files << QStringLiteral("notifications/Notifications.qml");
 
     QStringList problems;
     QStringList checked;

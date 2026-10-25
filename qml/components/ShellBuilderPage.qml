@@ -15,7 +15,6 @@ Item {
     property int previewPanel: 0
     property string previewQuery: ""
     property var previewApps: ["Firefox", "Files", "Terminal", "Settings", "Music", "Calendar"]
-    property string previewNow: ""
 
     function previewResults() {
         var query = page.previewQuery.toLowerCase();
@@ -34,6 +33,8 @@ Item {
         return Qt.formatDate(new Date(), "ddd d MMM");
     }
 
+    property string previewNow: ""
+
     Timer {
         interval: 1000
         running: true
@@ -48,14 +49,6 @@ Item {
 
     function paletteColor(key, fallback) {
         return page.app.colorFrom(page.app.selected, key, fallback);
-    }
-
-    function chipLabel(id) {
-        if (id === "clock")
-            return page.clockText();
-        if (id === "date")
-            return page.dateText();
-        return page.app.shellChip(id);
     }
 
     function hasWidget(id) {
@@ -643,25 +636,15 @@ Item {
                                 anchors.fill: parent
                                 anchors.leftMargin: 8
                                 anchors.rightMargin: 8
-                                spacing: 4
+                                spacing: Math.max(2, Math.round(page.app.shellGap * 0.3))
 
                                 Repeater {
                                     model: page.zoneList("left")
 
-                                    Rectangle {
+                                    ShellPreviewChip {
                                         required property var modelData
-                                        implicitWidth: leftChip.implicitWidth + 10
-                                        implicitHeight: 16
-                                        radius: 4
-                                        color: page.paletteColor("surfaceContainerHigh", "#2a2630")
-
-                                        Text {
-                                            id: leftChip
-                                            anchors.centerIn: parent
-                                            text: page.chipLabel(modelData)
-                                            color: page.paletteColor("onSurface", "#f2ecf5")
-                                            font.pixelSize: 8
-                                        }
+                                        widgetId: modelData
+                                        app: page.app
                                     }
                                 }
 
@@ -670,20 +653,10 @@ Item {
                                 Repeater {
                                     model: page.zoneList("center")
 
-                                    Rectangle {
+                                    ShellPreviewChip {
                                         required property var modelData
-                                        implicitWidth: centerChip.implicitWidth + 10
-                                        implicitHeight: 16
-                                        radius: 4
-                                        color: page.paletteColor("surfaceContainerHigh", "#2a2630")
-
-                                        Text {
-                                            id: centerChip
-                                            anchors.centerIn: parent
-                                            text: page.chipLabel(modelData)
-                                            color: page.paletteColor("onSurface", "#f2ecf5")
-                                            font.pixelSize: 8
-                                        }
+                                        widgetId: modelData
+                                        app: page.app
                                     }
                                 }
 
@@ -692,20 +665,10 @@ Item {
                                 Repeater {
                                     model: page.zoneList("right")
 
-                                    Rectangle {
+                                    ShellPreviewChip {
                                         required property var modelData
-                                        implicitWidth: rightChip.implicitWidth + 10
-                                        implicitHeight: 16
-                                        radius: 4
-                                        color: page.paletteColor("surfaceContainerHigh", "#2a2630")
-
-                                        Text {
-                                            id: rightChip
-                                            anchors.centerIn: parent
-                                            text: page.chipLabel(modelData)
-                                            color: page.paletteColor("onSurface", "#f2ecf5")
-                                            font.pixelSize: 8
-                                        }
+                                        widgetId: modelData
+                                        app: page.app
                                     }
                                 }
                             }
@@ -785,7 +748,7 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: page.dateText() + "  ·  " + page.clockText()
+                                    text: page.dateText() + "  ·  " + page.previewNow
                                     color: page.paletteColor("onSurface", "#f2ecf5")
                                     font.pixelSize: 14
                                     font.weight: Font.DemiBold

@@ -262,6 +262,68 @@ private slots:
         QVERIFY2(sawPrimary, "the pointer did not use the theme's primary colour");
     }
 
+    void cursorThemeTakesASizeAndListsShapes()
+    {
+        const Theme theme = Theme::fromMap(sampleTheme());
+        const QVariantList shapes = CursorTheme::shapes();
+        QVERIFY2(shapes.size() >= 23, qPrintable(QStringLiteral("only %1 shapes").arg(shapes.size())));
+
+        bool hasCopy = false;
+        bool hasDnd = false;
+        for (const QVariant &entry : shapes) {
+            const QVariantMap shape = entry.toMap();
+            const QString id = shape.value(QStringLiteral("id")).toString();
+            QVERIFY(!id.isEmpty());
+            QVERIFY(!shape.value(QStringLiteral("label")).toString().isEmpty());
+            const qreal x = shape.value(QStringLiteral("hotspotX")).toReal();
+            const qreal y = shape.value(QStringLiteral("hotspotY")).toReal();
+            QVERIFY(x >= 0.0 && x < 24.0);
+            QVERIFY(y >= 0.0 && y < 24.0);
+            if (id == QStringLiteral("copy"))
+                hasCopy = true;
+            if (id == QStringLiteral("dnd-no-drop"))
+                hasDnd = true;
+        }
+        QVERIFY(hasCopy);
+        QVERIFY(hasDnd);
+
+        QCOMPARE(CursorTheme::clampSize(1), 16);
+        QCOMPARE(CursorTheme::clampSize(999), 128);
+        QCOMPARE(CursorTheme::imageSizes(128), QVector<int>({128}));
+        QCOMPARE(CursorTheme::imageSizes(16), QVector<int>({16, 20, 24}));
+
+        const auto nominal = [](const QByteArray &data) {
+            return qFromLittleEndian<quint32>(reinterpret_cast<const uchar *>(data.constData() + 20));
+        };
+
+        const QHash<QString, QByteArray> small = CursorTheme::build(theme, 16);
+        QCOMPARE(nominal(small.value(QStringLiteral("cursors/left_ptr"))), 16u);
+        QVERIFY(small.contains(QStringLiteral("cursors/copy")));
+        QVERIFY(small.contains(QStringLiteral("cursors/alias")));
+        QVERIFY(small.contains(QStringLiteral("cursors/dnd-copy")));
+        QVERIFY(small.contains(QStringLiteral("cursors/pencil")));
+
+        const QHash<QString, QByteArray> large = CursorTheme::build(theme, 128);
+        QCOMPARE(nominal(large.value(QStringLiteral("cursors/left_ptr"))), 128u);
+        QVERIFY(large.value(QStringLiteral("cursors/left_ptr")).size()
+                > small.value(QStringLiteral("cursors/left_ptr")).size());
+
+        const QImage preview = CursorTheme::render(theme.palette, QStringLiteral("left_ptr"), 48);
+        QCOMPARE(preview.size(), QSize(48, 48));
+        bool painted = false;
+        for (int y = 0; y < preview.height() && !painted; ++y) {
+            for (int x = 0; x < preview.width(); ++x) {
+                if (qAlpha(preview.pixel(x, y)) != 0) {
+                    painted = true;
+                    break;
+                }
+            }
+        }
+        QVERIFY2(painted, "the pointer preview rendered nothing");
+        QCOMPARE(CursorTheme::render(theme.palette, QStringLiteral("copy"), 64).size(), QSize(64, 64));
+        QVERIFY(CursorTheme::render(theme.palette, QStringLiteral("not-a-shape"), 32).isNull());
+    }
+
     void applyCursorWritesThemeAndSettings()
     {
         QDir(Paths::configHome()).removeRecursively();
@@ -272,6 +334,12 @@ private slots:
         writeFile(gtkSettings, QStringLiteral("[Settings]\ngtk-theme-name=Adwaita\n"));
 
         Applier applier;
+        QCOMPARE(applier.cursorSize(), 32);
+        applier.setCursorSize(500);
+        QCOMPARE(applier.cursorSize(), 128);
+        applier.setCursorSize(40);
+        QCOMPARE(applier.cursorSize(), 40);
+
         const QVariantMap plan = applier.dryRun(sampleTheme(), {QStringLiteral("cursor")}, false);
         QVERIFY2(plan.value(QStringLiteral("ok")).toBool(),
                  qPrintable(plan.value(QStringLiteral("error")).toString()));
@@ -301,6 +369,11 @@ private slots:
         QVERIFY(readFile(Paths::configHome()
                          + QStringLiteral("/environment.d/90-hyperthemes-cursor.conf"))
                     .contains(QStringLiteral("XCURSOR_THEME=hyperthemes")));
+        QVERIFY(readFile(Paths::configHome()
+                         + QStringLiteral("/environment.d/90-hyperthemes-cursor.conf"))
+                    .contains(QStringLiteral("XCURSOR_SIZE=40")));
+        QVERIFY(readFile(Paths::configHome() + QStringLiteral("/kcminputrc"))
+                    .contains(QStringLiteral("cursorSize=40")));
 
         const QVariantMap restored = applier.rollback(applied.value(QStringLiteral("backup")).toString());
         QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
@@ -485,6 +558,10 @@ private slots:
         QVERIFY(bar.contains(QStringLiteral("Hyprland.workspaces")));
         QVERIFY(bar.contains(QStringLiteral("theme.barHeight")));
 
+        // The notification tray is only written when the widget is used.
+        QVERIFY(!shell.contains(QStringLiteral("import \"notifications\"")));
+        QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/notifications/Notifications.qml")));
+
         const QVariantMap manifest = QJsonDocument::fromJson(
             readFile(dir + QStringLiteral("/hyperthemes.json")).toUtf8()).object().toVariantMap();
         QCOMPARE(manifest.value(QStringLiteral("generator")).toString(), QStringLiteral("HyperThemes"));
@@ -605,6 +682,14 @@ private slots:
     void shellBuilderCoversEveryWidget()
     {
         ShellBuilder builder;
+        QVariantList listed;
+        for (const QVariant &entry : builder.widgets())
+            listed << entry.toMap().value(QStringLiteral("id")).toString();
+        for (const QString &id : {QStringLiteral("separator"), QStringLiteral("spacer"),
+                                  QStringLiteral("systemLoad"), QStringLiteral("uptime"),
+                                  QStringLiteral("memory"), QStringLiteral("notifications")})
+            QVERIFY2(listed.contains(id), qPrintable(id));
+
         QVariantMap config = builder.defaults();
         config.insert(QStringLiteral("name"), QStringLiteral("all-widgets"));
         config.insert(QStringLiteral("palette"), sampleTheme().value(QStringLiteral("palette")));
@@ -620,7 +705,8 @@ private slots:
             {QStringLiteral("right"), QStringList{QStringLiteral("network"), QStringLiteral("bluetooth"),
                                                   QStringLiteral("tray"), QStringLiteral("battery"),
                                                   QStringLiteral("statusIcons"), QStringLiteral("systemLoad"),
-                                                  QStringLiteral("power")}},
+                                                  QStringLiteral("uptime"), QStringLiteral("memory"),
+                                                  QStringLiteral("notifications"), QStringLiteral("power")}},
         });
 
         const QVariantMap result = builder.build(config);
@@ -637,11 +723,27 @@ private slots:
             QStringLiteral("SystemTray.items"), QStringLiteral("batteryWidget"),
             QStringLiteral("statusHover"), QStringLiteral("powerHover"),
             QStringLiteral("launcherHover"), QStringLiteral("loadLabel"),
+            QStringLiteral("uptimeLabel"), QStringLiteral("memoryLabel"),
+            QStringLiteral("notificationCount"), QStringLiteral("NotificationServer"),
+            QStringLiteral("notificationsRequested"), QStringLiteral("list[i].body"),
             QStringLiteral("SplitParser"), QStringLiteral("implicitWidth: 14"),
         };
         for (const QString &marker : markers)
             QVERIFY2(bar.contains(marker), qPrintable(marker));
         QCOMPARE(bar.count(QStringLiteral("id: clockLabel")), 1);
+
+        // The notification widget opens a tray panel wired from shell.qml.
+        const QString trayPath = dir + QStringLiteral("/notifications/Notifications.qml");
+        QVERIFY(QFileInfo::exists(trayPath));
+        const QString tray = readFile(trayPath);
+        for (const QString &marker : {QStringLiteral("IpcHandler"), QStringLiteral("qs ipc call notifications toggle"),
+                                      QStringLiteral("property var tracked"), QStringLiteral("modelData.body")})
+            QVERIFY2(tray.contains(marker), qPrintable(marker));
+        const QString shell = readFile(dir + QStringLiteral("/shell.qml"));
+        for (const QString &marker : {QStringLiteral("import \"notifications\""),
+                                      QStringLiteral("onNotificationsRequested: notifications.toggle()"),
+                                      QStringLiteral("tracked: bar.notificationList")})
+            QVERIFY2(shell.contains(marker), qPrintable(marker));
 
         const QString imports = QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
         if (!QStandardPaths::findExecutable(QStringLiteral("qmllint")).isEmpty()
@@ -780,6 +882,15 @@ private slots:
                                 QStringLiteral("Dracula")}));
         QVERIFY(Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("--dry-run"),
                                 QStringLiteral("--apply")}));
+        QVERIFY(Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("--cursor-size"),
+                                QStringLiteral("40")}));
+
+        const Cli::Result badSize = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"),
+                                              QStringLiteral("Dracula"), QStringLiteral("--target"),
+                                              QStringLiteral("cursor"), QStringLiteral("--cursor-size"),
+                                              QStringLiteral("200")});
+        QCOMPARE(badSize.exitCode, 2);
+        QVERIFY(badSize.error.contains(QStringLiteral("cursor-size")));
         QVERIFY(!Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("-platform"),
                                  QStringLiteral("offscreen")}));
 

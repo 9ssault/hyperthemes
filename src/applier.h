@@ -3,6 +3,7 @@
 #include "theme.h"
 
 #include <QObject>
+#include <QVariantList>
 #include <QVariantMap>
 #include <QVector>
 
@@ -10,6 +11,7 @@ class Applier : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString lastBackup READ lastBackup NOTIFY lastBackupChanged)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
+    Q_PROPERTY(int cursorSize READ cursorSize WRITE setCursorSize NOTIFY cursorSizeChanged)
 
 public:
     explicit Applier(QObject *parent = nullptr);
@@ -19,13 +21,17 @@ public:
     Q_INVOKABLE QVariantMap rollback(const QString &backupId = {});
     Q_INVOKABLE QVariantMap setWallpaper(const QString &path);
     Q_INVOKABLE QStringList backups() const;
+    Q_INVOKABLE QVariantList cursorShapes() const;
 
     QString lastBackup() const { return m_lastBackup; }
     QString status() const { return m_status; }
+    int cursorSize() const { return m_cursorSize; }
+    void setCursorSize(int size);
 
 signals:
     void lastBackupChanged();
     void statusChanged();
+    void cursorSizeChanged();
 
 private:
     struct Entry {
@@ -92,4 +98,5 @@ private:
 
     QString m_lastBackup;
     QString m_status;
+    int m_cursorSize = 32;
 };

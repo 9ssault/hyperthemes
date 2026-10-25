@@ -42,6 +42,20 @@ Applier::Applier(QObject *parent)
     QDir().mkpath(Paths::backupsDir());
 }
 
+void Applier::setCursorSize(int size)
+{
+    const int clamped = CursorTheme::clampSize(size);
+    if (m_cursorSize == clamped)
+        return;
+    m_cursorSize = clamped;
+    emit cursorSizeChanged();
+}
+
+QVariantList Applier::cursorShapes() const
+{
+    return CursorTheme::shapes();
+}
+
 QString Applier::timestampId(const QString &themeId)
 {
     return QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"))
@@ -682,7 +696,7 @@ void Applier::applyHyprland(Session &session, const Theme &theme)
 
 void Applier::applyCursor(Session &session, const Theme &theme)
 {
-    const QHash<QString, QByteArray> files = CursorTheme::build(theme);
+    const QHash<QString, QByteArray> files = CursorTheme::build(theme, m_cursorSize);
     if (files.isEmpty()) {
         session.warnings << QStringLiteral("The pointer theme could not be generated");
         return;
@@ -707,11 +721,18 @@ void Applier::applyCursor(Session &session, const Theme &theme)
     if (!setIniValue(session, Paths::configHome() + QStringLiteral("/kcminputrc"),
                      QStringLiteral("Mouse"), QStringLiteral("cursorTheme"), name))
         return;
+    if (!setIniValue(session, Paths::configHome() + QStringLiteral("/kcminputrc"),
+                     QStringLiteral("Mouse"), QStringLiteral("cursorSize"),
+                     QString::number(m_cursorSize)))
+        return;
 
     const QString environment = Paths::configHome()
         + QStringLiteral("/environment.d/90-hyperthemes-cursor.conf");
     if (!writeFile(session, environment,
-                   QStringLiteral("XCURSOR_THEME=%1\n").arg(name).toUtf8(), false))
+                   QStringLiteral("XCURSOR_THEME=%1\nXCURSOR_SIZE=%2\n")
+                       .arg(name, QString::number(m_cursorSize))
+                       .toUtf8(),
+                   false))
         return;
 
     if (!session.dryRun && !qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD")) {
@@ -721,10 +742,15 @@ void Applier::applyCursor(Session &session, const Theme &theme)
             {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.interface"),
              QStringLiteral("cursor-theme"), name},
             10000);
-        run(QStringLiteral("hyprctl"), {QStringLiteral("setcursor"), name, QStringLiteral("24")}, 8000);
+        run(QStringLiteral("gsettings"),
+            {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.interface"),
+             QStringLiteral("cursor-size"), QString::number(m_cursorSize)},
+            10000);
+        run(QStringLiteral("hyprctl"),
+            {QStringLiteral("setcursor"), name, QString::number(m_cursorSize)}, 8000);
         run(QStringLiteral("swaymsg"),
             {QStringLiteral("seat"), QStringLiteral("*"), QStringLiteral("xcursor_theme"), name,
-             QStringLiteral("24")},
+             QString::number(m_cursorSize)},
             8000);
         if (!run(QStringLiteral("xfconf-query"),
                  {QStringLiteral("-c"), QStringLiteral("xsettings"), QStringLiteral("-p"),

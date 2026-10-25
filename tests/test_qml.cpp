@@ -2,6 +2,7 @@
 
 #include "applier.h"
 #include "catalog.h"
+#include "cursorpreview.h"
 #include "layoutapplier.h"
 #include "localsource.h"
 #include "palettegenerator.h"
@@ -10,6 +11,7 @@
 
 #include <QClipboard>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -19,6 +21,8 @@
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QScreen>
+#include <QSet>
 #include <QTemporaryDir>
 
 class QmlTest : public QObject {
@@ -38,6 +42,7 @@ private slots:
         qputenv("HYPER_THEMES_NO_RELOAD", "1");
 
         QQuickStyle::setStyle(QStringLiteral("Basic"));
+        qmlRegisterType<PointerShapeItem>("HyperThemes", 1, 0, "PointerShape");
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Applier", &m_applier);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "Catalog", &m_catalog);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "LocalSource", &m_localSource);
@@ -165,6 +170,106 @@ private slots:
         m_root->setProperty("followPalette", true);
     }
 
+    void pointerInspectorCoversEveryShape()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVERIFY(!themes.isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, themes.first())));
+
+        const QVariantList shapes = m_root->property("pointerShapes").toList();
+        QVERIFY2(shapes.size() >= 23, qPrintable(QStringLiteral("only %1 pointer shapes").arg(shapes.size())));
+
+        bool hasCopy = false;
+        for (const QVariant &entry : shapes) {
+            const QVariantMap shape = entry.toMap();
+            const QString id = shape.value(QStringLiteral("id")).toString();
+            QVERIFY(!id.isEmpty());
+            QVERIFY(!shape.value(QStringLiteral("label")).toString().isEmpty());
+            QVERIFY(shape.value(QStringLiteral("hotspotX")).toReal() >= 0.0);
+            QVERIFY(shape.value(QStringLiteral("hotspotX")).toReal() < 24.0);
+            QVERIFY(shape.value(QStringLiteral("hotspotY")).toReal() >= 0.0);
+            QVERIFY(shape.value(QStringLiteral("hotspotY")).toReal() < 24.0);
+            if (id == QStringLiteral("copy"))
+                hasCopy = true;
+        }
+        QVERIFY(hasCopy);
+
+        auto *slider = m_root->findChild<QObject *>(QStringLiteral("pointerSizeSlider"));
+        QVERIFY(slider);
+        QCOMPARE(slider->property("from").toInt(), 16);
+        QCOMPARE(slider->property("to").toInt(), 128);
+
+        m_applier.setCursorSize(64);
+        QTRY_COMPARE(slider->property("value").toInt(), 64);
+        QCOMPARE(m_root->property("pointerShapes").toList().size(), shapes.size());
+
+        auto *settings = m_root->findChild<QObject *>(QStringLiteral("appSettings"));
+        QVERIFY(settings);
+        QTRY_COMPARE(settings->property("cursorSize").toInt(), 64);
+        m_applier.setCursorSize(32);
+    }
+
+    void browsingReusesSearchAndSortCaches()
+    {
+        m_root->setProperty("search", QStringLiteral("dracula"));
+        m_root->setProperty("favoritesOnly", false);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+
+        const QVariantList cached = m_root->property("filtered").toList();
+        QVERIFY(!cached.isEmpty());
+
+        QElapsedTimer warmTimer;
+        warmTimer.start();
+        for (int i = 0; i < 20; ++i)
+            QMetaObject::invokeMethod(m_root, "recompute");
+        const qint64 warm = warmTimer.nsecsElapsed();
+
+        QElapsedTimer coldTimer;
+        coldTimer.start();
+        for (int i = 0; i < 20; ++i) {
+            m_root->setProperty("searchCache", QVariantMap());
+            m_root->setProperty("sortCache", QVariantMap());
+            QMetaObject::invokeMethod(m_root, "recompute");
+        }
+        const qint64 cold = coldTimer.nsecsElapsed();
+
+        QCOMPARE(m_root->property("filtered").toList().size(), cached.size());
+        qInfo() << "recompute" << cold / 1000000.0 << "ms without caches,"
+                << warm / 1000000.0 << "ms with caches (20 runs each)";
+        QVERIFY(warm > 0 && cold > 0);
+
+        m_root->setProperty("search", QString());
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+    }
+
+    void windowLayoutIsRemembered()
+    {
+        auto *settings = m_root->findChild<QObject *>(QStringLiteral("appSettings"));
+        QVERIFY(settings);
+
+        m_root->setProperty("width", 1300);
+        m_root->setProperty("height", 800);
+        QTRY_COMPARE(settings->property("windowWidth").toInt(), 1300);
+        QTRY_COMPARE(settings->property("windowHeight").toInt(), 800);
+        QCOMPARE(settings->property("inspectorWidth").toInt(),
+                 m_root->property("inspectorWidth").toInt());
+
+        m_root->setProperty("x", 40);
+        m_root->setProperty("y", 30);
+        QTRY_COMPARE(settings->property("windowX").toInt(), 40);
+        QTRY_COMPARE(settings->property("windowY").toInt(), 30);
+
+        QScreen *screen = m_root->property("screen").value<QScreen *>();
+        if (screen && !screen->name().isEmpty()) {
+            settings->setProperty("windowScreen", screen->name());
+            settings->setProperty("windowX", 20);
+            settings->setProperty("windowY", 15);
+            QVERIFY(QMetaObject::invokeMethod(m_root, "restoreWindowPosition"));
+            QCOMPARE(m_root->property("x").toInt(), screen->geometry().x() + 20);
+            QCOMPARE(m_root->property("y").toInt(), screen->geometry().y() + 15);
+        }
+    }
+
     void quickshellBuilderPage()
     {
         const QVariantList themes = m_root->property("themes").toList();
@@ -172,7 +277,15 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, themes.first())));
 
         m_root->setProperty("page", QStringLiteral("shell"));
-        QVERIFY(m_root->property("shellWidgets").toList().size() >= 13);
+        const QVariantList widgets = m_root->property("shellWidgets").toList();
+        QVERIFY(widgets.size() >= 19);
+        QSet<QString> widgetIds;
+        for (const QVariant &entry : widgets)
+            widgetIds.insert(entry.toMap().value(QStringLiteral("id")).toString());
+        for (const QString &id : {QStringLiteral("separator"), QStringLiteral("spacer"),
+                                  QStringLiteral("systemLoad"), QStringLiteral("uptime"),
+                                  QStringLiteral("memory"), QStringLiteral("notifications")})
+            QVERIFY2(widgetIds.contains(id), qPrintable(id));
 
         bool hasBtopTarget = false;
         bool hasCursorTarget = false;

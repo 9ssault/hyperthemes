@@ -30,6 +30,13 @@ enum class Shape {
     Menu,
     ZoomIn,
     ZoomOut,
+    Copy,
+    Alias,
+    Link,
+    Pencil,
+    DndCopy,
+    DndLink,
+    DndNoDrop,
 };
 
 struct CursorSpec {
@@ -105,6 +112,17 @@ const QVector<CursorSpec> &specs()
         {Shape::Menu, "context-menu"},
         {Shape::ZoomIn, "zoom-in"},
         {Shape::ZoomOut, "zoom-out"},
+        {Shape::Copy, "copy"},
+        {Shape::Alias, "alias"},
+        {Shape::Link, "link"},
+        {Shape::Pencil, "pencil"},
+        {Shape::Pencil, "draft"},
+        {Shape::DndCopy, "dnd-copy"},
+        {Shape::DndLink, "dnd-link"},
+        {Shape::DndNoDrop, "dnd-no-drop"},
+        {Shape::Arrow, "dnd-none"},
+        {Shape::Move, "dnd-move"},
+        {Shape::Help, "dnd-ask"},
     };
     return list;
 }
@@ -141,6 +159,15 @@ QPointF hotspot(Shape shape)
     case Shape::ZoomIn:
     case Shape::ZoomOut:
         return QPointF(10.5, 10.5);
+    case Shape::Copy:
+    case Shape::Alias:
+    case Shape::Link:
+    case Shape::DndCopy:
+    case Shape::DndLink:
+    case Shape::DndNoDrop:
+        return QPointF(3.0, 2.0);
+    case Shape::Pencil:
+        return QPointF(2.4, 21.4);
     }
     return QPointF(12.0, 12.0);
 }
@@ -227,6 +254,54 @@ QPainterPath menuPath()
     QPainterPath path;
     path.addRoundedRect(QRectF(3.0, 5.0, 18.0, 14.0), 2.4, 2.4);
     return path;
+}
+
+QPainterPath pencilPath()
+{
+    QPainterPath path;
+    path.moveTo(2.4, 21.4);
+    path.lineTo(4.4, 15.6);
+    path.lineTo(15.6, 4.2);
+    path.lineTo(19.8, 8.4);
+    path.lineTo(8.6, 19.8);
+    path.closeSubpath();
+    return path;
+}
+
+QPainterPath linkPath()
+{
+    QPainterPath first;
+    first.addRoundedRect(QRectF(2.6, 9.0, 9.6, 5.4), 2.7, 2.7);
+    QPainterPath second;
+    second.addRoundedRect(QRectF(11.8, 9.0, 9.6, 5.4), 2.7, 2.7);
+
+    QTransform transform;
+    transform.translate(12.0, 12.0);
+    transform.rotate(-38.0);
+    transform.translate(-12.0, -12.0);
+    return transform.map(first.united(second));
+}
+
+void paintBadge(QPainter &painter, Shape kind, const CursorColors &colors)
+{
+    const QPointF centre(18.6, 18.6);
+    const qreal radius = 4.2;
+    painter.setPen(QPen(colors.contrast, 1.1, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(kind == Shape::DndNoDrop ? colors.error : colors.contrast);
+    painter.drawEllipse(centre, radius, radius);
+
+    const QColor mark = kind == Shape::DndNoDrop ? colors.errorContrast : colors.accent;
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(mark, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    if (kind == Shape::DndLink) {
+        painter.drawEllipse(QRectF(15.4, 17.4, 3.2, 2.4));
+        painter.drawEllipse(QRectF(18.6, 17.4, 3.2, 2.4));
+    } else if (kind == Shape::DndNoDrop) {
+        painter.drawLine(QPointF(16.4, 16.4), QPointF(20.8, 20.8));
+    } else {
+        painter.drawLine(QPointF(16.2, 18.6), QPointF(21.0, 18.6));
+        painter.drawLine(QPointF(18.6, 16.2), QPointF(18.6, 21.0));
+    }
 }
 
 void paintFilled(QPainter &painter, const QPainterPath &path, const QColor &fill,
@@ -375,10 +450,58 @@ void paintShape(QPainter &painter, Shape shape, const CursorColors &colors)
             painter.drawLine(sign.last());
         break;
     }
+    case Shape::Copy: {
+        QPainterPath back;
+        back.addRoundedRect(QRectF(7.0, 3.0, 13.0, 12.5), 2.0, 2.0);
+        paintFilled(painter, back, colors.contrast, colors.contrast, 1.0);
+        QPainterPath front;
+        front.addRoundedRect(QRectF(3.4, 7.4, 13.0, 13.2), 2.0, 2.0);
+        paintFilled(painter, front, colors.accent, colors.contrast);
+        break;
+    }
+    case Shape::Alias: {
+        QTransform transform;
+        transform.scale(0.82, 0.82);
+        transform.translate(0.9, 0.5);
+        paintFilled(painter, transform.map(arrowPath()), colors.accent, colors.contrast, 1.5);
+
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(colors.contrast, 4.0, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(QPointF(14.8, 20.6), QPointF(20.2, 15.2));
+        painter.setPen(QPen(colors.accent, 1.8, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(QPointF(14.8, 20.6), QPointF(20.2, 15.2));
+        paintFilled(painter, triangle(QPointF(22.0, 13.4), QPointF(18.2, 13.8), QPointF(21.6, 17.2)),
+                    colors.accent, colors.contrast, 0.9);
+        break;
+    }
+    case Shape::Link:
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(colors.contrast, 5.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPath(linkPath());
+        painter.setPen(QPen(colors.accent, 2.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter.drawPath(linkPath());
+        break;
+    case Shape::Pencil:
+        paintFilled(painter, pencilPath(), colors.accent, colors.contrast);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(colors.contrast, 1.2, Qt::SolidLine, Qt::RoundCap));
+        painter.drawLine(QPointF(4.4, 15.6), QPointF(8.6, 19.8));
+        painter.drawLine(QPointF(8.6, 19.8), QPointF(9.6, 17.2));
+        break;
+    case Shape::DndCopy:
+    case Shape::DndLink:
+    case Shape::DndNoDrop: {
+        QTransform transform;
+        transform.scale(0.82, 0.82);
+        transform.translate(0.8, 0.6);
+        paintFilled(painter, transform.map(arrowPath()), colors.accent, colors.contrast, 1.5);
+        paintBadge(painter, shape, colors);
+        break;
+    }
     }
 }
 
-QImage render(Shape shape, int size, const CursorColors &colors)
+QImage drawShape(Shape shape, int size, const CursorColors &colors)
 {
     QImage image(size, size, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
@@ -390,6 +513,145 @@ QImage render(Shape shape, int size, const CursorColors &colors)
     painter.end();
 
     return image;
+}
+
+CursorColors cursorColors(const QVariantMap &rawPalette)
+{
+    const QVariantMap palette = Palette::normalise(rawPalette);
+    const QColor accent = Palette::colour(palette, QStringLiteral("primary"), QColor(QStringLiteral("#8ab4f8")));
+    const QColor error = Palette::colour(palette, QStringLiteral("error"), QColor(QStringLiteral("#ff6b6b")));
+    return {
+        accent,
+        QColor(Palette::withHash(Palette::onColour(accent))),
+        error,
+        QColor(Palette::withHash(Palette::onColour(error))),
+    };
+}
+
+QString canonicalName(Shape shape)
+{
+    switch (shape) {
+    case Shape::Arrow:
+        return QStringLiteral("left_ptr");
+    case Shape::Hand:
+        return QStringLiteral("hand2");
+    case Shape::Text:
+        return QStringLiteral("text");
+    case Shape::Crosshair:
+        return QStringLiteral("crosshair");
+    case Shape::Move:
+        return QStringLiteral("move");
+    case Shape::Horizontal:
+        return QStringLiteral("horizontal");
+    case Shape::Vertical:
+        return QStringLiteral("vertical");
+    case Shape::DiagonalDown:
+        return QStringLiteral("diagonal-down");
+    case Shape::DiagonalUp:
+        return QStringLiteral("diagonal-up");
+    case Shape::Watch:
+        return QStringLiteral("watch");
+    case Shape::Progress:
+        return QStringLiteral("progress");
+    case Shape::NotAllowed:
+        return QStringLiteral("not-allowed");
+    case Shape::Help:
+        return QStringLiteral("help");
+    case Shape::Menu:
+        return QStringLiteral("menu");
+    case Shape::ZoomIn:
+        return QStringLiteral("zoom-in");
+    case Shape::ZoomOut:
+        return QStringLiteral("zoom-out");
+    case Shape::Copy:
+        return QStringLiteral("copy");
+    case Shape::Alias:
+        return QStringLiteral("alias");
+    case Shape::Link:
+        return QStringLiteral("link");
+    case Shape::Pencil:
+        return QStringLiteral("pencil");
+    case Shape::DndCopy:
+        return QStringLiteral("dnd-copy");
+    case Shape::DndLink:
+        return QStringLiteral("dnd-link");
+    case Shape::DndNoDrop:
+        return QStringLiteral("dnd-no-drop");
+    }
+    return QStringLiteral("left_ptr");
+}
+
+QString shapeLabel(Shape shape)
+{
+    switch (shape) {
+    case Shape::Arrow:
+        return QStringLiteral("Arrow");
+    case Shape::Hand:
+        return QStringLiteral("Hand");
+    case Shape::Text:
+        return QStringLiteral("Text");
+    case Shape::Crosshair:
+        return QStringLiteral("Crosshair");
+    case Shape::Move:
+        return QStringLiteral("Move");
+    case Shape::Horizontal:
+        return QStringLiteral("Resize left/right");
+    case Shape::Vertical:
+        return QStringLiteral("Resize up/down");
+    case Shape::DiagonalDown:
+        return QStringLiteral("Resize down-right");
+    case Shape::DiagonalUp:
+        return QStringLiteral("Resize up-right");
+    case Shape::Watch:
+        return QStringLiteral("Busy");
+    case Shape::Progress:
+        return QStringLiteral("Background busy");
+    case Shape::NotAllowed:
+        return QStringLiteral("Not allowed");
+    case Shape::Help:
+        return QStringLiteral("Help");
+    case Shape::Menu:
+        return QStringLiteral("Menu");
+    case Shape::ZoomIn:
+        return QStringLiteral("Zoom in");
+    case Shape::ZoomOut:
+        return QStringLiteral("Zoom out");
+    case Shape::Copy:
+        return QStringLiteral("Copy");
+    case Shape::Alias:
+        return QStringLiteral("Alias");
+    case Shape::Link:
+        return QStringLiteral("Link");
+    case Shape::Pencil:
+        return QStringLiteral("Pencil");
+    case Shape::DndCopy:
+        return QStringLiteral("Drag copy");
+    case Shape::DndLink:
+        return QStringLiteral("Drag link");
+    case Shape::DndNoDrop:
+        return QStringLiteral("Drag no-drop");
+    }
+    return QStringLiteral("Pointer");
+}
+
+bool findShape(const QString &id, Shape *shape)
+{
+    const QString needle = id.trimmed().toLower();
+    if (needle.isEmpty())
+        return false;
+    for (const CursorSpec &spec : specs()) {
+        if (needle == canonicalName(spec.shape)) {
+            *shape = spec.shape;
+            return true;
+        }
+    }
+    for (const CursorSpec &spec : specs()) {
+        if (needle == QLatin1String(spec.name)) {
+            *shape = spec.shape;
+            return true;
+        }
+    }
+    return false;
 }
 
 void put32(QByteArray &data, quint32 value)
@@ -454,6 +716,51 @@ QString clean(QString text)
 
 } // namespace
 
+int CursorTheme::clampSize(int size)
+{
+    return qBound(minimumSize, size, maximumSize);
+}
+
+QVector<int> CursorTheme::imageSizes(int size)
+{
+    const int base = clampSize(size);
+    QVector<int> sizes{base};
+    for (const double factor : {1.25, 1.5}) {
+        const int next = qRound(base * factor);
+        if (next <= maximumSize && next != sizes.constLast())
+            sizes.append(next);
+    }
+    return sizes;
+}
+
+QVariantList CursorTheme::shapes()
+{
+    QVariantList list;
+    QStringList seen;
+    for (const CursorSpec &spec : specs()) {
+        const QString id = canonicalName(spec.shape);
+        if (seen.contains(id))
+            continue;
+        seen << id;
+        const QPointF spot = hotspot(spec.shape);
+        list.append(QVariantMap{
+            {QStringLiteral("id"), id},
+            {QStringLiteral("label"), shapeLabel(spec.shape)},
+            {QStringLiteral("hotspotX"), spot.x()},
+            {QStringLiteral("hotspotY"), spot.y()},
+        });
+    }
+    return list;
+}
+
+QImage CursorTheme::render(const QVariantMap &palette, const QString &id, int size)
+{
+    Shape shape;
+    if (!findShape(id, &shape))
+        return {};
+    return drawShape(shape, clampSize(size), cursorColors(palette));
+}
+
 QString CursorTheme::themeName()
 {
     return QStringLiteral("hyperthemes");
@@ -480,18 +787,10 @@ QByteArray CursorTheme::defaultThemeFile()
         .toUtf8();
 }
 
-QHash<QString, QByteArray> CursorTheme::build(const Theme &theme)
+QHash<QString, QByteArray> CursorTheme::build(const Theme &theme, int size)
 {
-    const QVariantMap palette = Palette::normalise(theme.palette);
-    const QColor accent = Palette::colour(palette, QStringLiteral("primary"), QColor(QStringLiteral("#8ab4f8")));
-    const QColor error = Palette::colour(palette, QStringLiteral("error"), QColor(QStringLiteral("#ff6b6b")));
-
-    const CursorColors colors{
-        accent,
-        QColor(Palette::withHash(Palette::onColour(accent))),
-        error,
-        QColor(Palette::withHash(Palette::onColour(error))),
-    };
+    const CursorColors colors = cursorColors(theme.palette);
+    const QVector<int> sizes = imageSizes(size);
 
     QHash<int, QByteArray> encoded;
     QHash<QString, QByteArray> files;
@@ -499,8 +798,9 @@ QHash<QString, QByteArray> CursorTheme::build(const Theme &theme)
         const int key = static_cast<int>(spec.shape);
         if (!encoded.contains(key)) {
             QVector<QImage> images;
-            for (const int size : {24, 32, 48})
-                images.append(render(spec.shape, size, colors));
+            images.reserve(sizes.size());
+            for (const int pixelSize : sizes)
+                images.append(drawShape(spec.shape, pixelSize, colors));
             encoded.insert(key, encodeXcursor(images, hotspot(spec.shape)));
         }
         files.insert(QStringLiteral("cursors/") + QString::fromLatin1(spec.name), encoded.value(key));

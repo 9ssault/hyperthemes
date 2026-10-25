@@ -2,6 +2,7 @@
 
 #include "applier.h"
 #include "catalog.h"
+#include "cursortheme.h"
 #include "shellbuilder.h"
 
 #include <QCoreApplication>
@@ -50,6 +51,7 @@ struct Options {
     bool system = false;
     bool dryRun = false;
     bool help = false;
+    int cursorSize = CursorTheme::defaultSize;
 };
 
 QString usageError(const QString &message)
@@ -77,6 +79,7 @@ QString Cli::helpText()
         "  --target <name>     Target to apply; repeat for several\n"
         "  --targets <a,b>     Comma-separated targets\n"
         "  --dry-run           Show the files an apply would change\n"
+        "  --cursor-size <px>  Pointer size for the cursor target (16-128)\n"
         "  --system            Write the KDE scheme system-wide (pkexec)\n"
         "  --list-themes [q]   Print matching ids, names and categories\n"
         "  --list-targets      Print supported targets\n"
@@ -94,6 +97,7 @@ bool Cli::requested(const QStringList &arguments)
         QStringLiteral("--apply"), QStringLiteral("--target"), QStringLiteral("--targets"),
         QStringLiteral("--system"), QStringLiteral("--dry-run"), QStringLiteral("--list-themes"),
         QStringLiteral("--list-targets"), QStringLiteral("--list-configs"),
+        QStringLiteral("--cursor-size"),
         QStringLiteral("--help"), QStringLiteral("-h"),
     };
 
@@ -165,6 +169,17 @@ Cli::Result Cli::run(const QStringList &arguments)
             const QStringList parts = value.split(QLatin1Char(','), Qt::SkipEmptyParts);
             for (const QString &part : parts)
                 options.targets << part.trimmed();
+        } else if (argument == QLatin1String("--cursor-size")) {
+            QString value;
+            if (!takeValue(&value) || value.isEmpty())
+                return fail(QStringLiteral("--cursor-size needs a number of pixels."));
+            bool ok = false;
+            const int size = value.toInt(&ok);
+            if (!ok || size < CursorTheme::minimumSize || size > CursorTheme::maximumSize)
+                return fail(QStringLiteral("--cursor-size must be between %1 and %2.")
+                                .arg(CursorTheme::minimumSize)
+                                .arg(CursorTheme::maximumSize));
+            options.cursorSize = size;
         } else if (argument == QLatin1String("--system")) {
             if (hasInline)
                 return fail(QStringLiteral("--system does not take a value."));
@@ -300,6 +315,7 @@ Cli::Result Cli::run(const QStringList &arguments)
     }
 
     Applier applier;
+    applier.setCursorSize(options.cursorSize);
     const QVariantMap applied = options.dryRun
         ? applier.dryRun(chosenTheme, targets, options.system)
         : applier.apply(chosenTheme, targets, options.system);

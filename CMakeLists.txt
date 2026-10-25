@@ -23,6 +23,8 @@ qt_add_executable(hyperthemes
     src/catalog.h
     src/cli.cpp
     src/cli.h
+    src/cursorpreview.cpp
+    src/cursorpreview.h
     src/cursortheme.cpp
     src/cursortheme.h
     src/layoutapplier.cpp
@@ -127,6 +129,8 @@ if(BUILD_TESTING)
         src/applier.h
         src/catalog.cpp
         src/catalog.h
+        src/cursorpreview.cpp
+        src/cursorpreview.h
         src/cursortheme.cpp
         src/cursortheme.h
         src/layoutapplier.cpp

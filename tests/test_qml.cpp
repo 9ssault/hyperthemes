@@ -260,6 +260,15 @@ private slots:
 
         auto *window = qobject_cast<QQuickWindow *>(m_root);
         QVERIFY(window);
+
+        const QString size = qEnvironmentVariable("HYPER_THEMES_SCREENSHOT_SIZE");
+        if (!size.isEmpty()) {
+            const QStringList parts = size.split(QLatin1Char('x'));
+            if (parts.size() == 2) {
+                m_root->setProperty("width", parts.at(0).toInt());
+                m_root->setProperty("height", parts.at(1).toInt());
+            }
+        }
         QTest::qWait(400);
         const QImage image = window->grabWindow();
         QVERIFY(!image.isNull());

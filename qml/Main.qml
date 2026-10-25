@@ -11,7 +11,7 @@ ApplicationWindow {
 
     width: 1380
     height: 880
-    minimumWidth: 1080
+    minimumWidth: 1180
     minimumHeight: 680
     visible: true
     title: "HyperThemes"
@@ -1254,6 +1254,21 @@ ApplicationWindow {
                     font.weight: Font.DemiBold
                 }
 
+                Flickable {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 120
+                    clip: true
+                    contentWidth: width
+                    contentHeight: collectionColumn.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                    ColumnLayout {
+                        id: collectionColumn
+                        width: parent.width
+                        spacing: 4
+
                 Repeater {
                     model: root.collectionModel
 
@@ -1300,6 +1315,8 @@ ApplicationWindow {
                         }
                     }
                 }
+                    }
+                }
 
                 Text {
                     Layout.fillWidth: true
@@ -1311,17 +1328,16 @@ ApplicationWindow {
                     elide: Text.ElideRight
                 }
 
-                Item { Layout.fillHeight: true }
-
                 Rectangle {
                     Layout.fillWidth: true
                     radius: 12
                     color: colors.panel2
                     border.width: 1
                     border.color: colors.border
-                    implicitHeight: matugenText.implicitHeight + 24
+                    implicitHeight: matugenColumn.implicitHeight + 24
 
                     ColumnLayout {
+                        id: matugenColumn
                         anchors.fill: parent
                         anchors.margins: 12
                         spacing: 3
@@ -1358,6 +1374,7 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            Layout.minimumWidth: 520
             color: colors.bg
 
             ColumnLayout {
@@ -1371,9 +1388,12 @@ ApplicationWindow {
 
                     ColumnLayout {
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 240
                         spacing: 2
 
                         Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
                             text: root.page === "dynamic"
                                 ? "Dynamic palette"
                                 : root.page === "layouts"
@@ -1391,6 +1411,8 @@ ApplicationWindow {
                         }
 
                         Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
                             text: root.page === "dynamic"
                                 ? "Generate a complete palette from any wallpaper with Matugen, then send it everywhere."
                                 : root.page === "layouts"
@@ -1433,7 +1455,9 @@ ApplicationWindow {
 
                     TextField {
                         id: searchField
-                        Layout.preferredWidth: 300
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 180
+                        Layout.maximumWidth: 340
                         Layout.preferredHeight: 32
                         leftPadding: 32
                         placeholderText: "Search themes, authors, sources…"

@@ -23,6 +23,8 @@ qt_add_executable(hyperthemes
     src/catalog.h
     src/cli.cpp
     src/cli.h
+    src/cursortheme.cpp
+    src/cursortheme.h
     src/layoutapplier.cpp
     src/layoutapplier.h
     src/localsource.cpp
@@ -81,6 +83,8 @@ if(BUILD_TESTING)
         src/catalog.h
         src/cli.cpp
         src/cli.h
+        src/cursortheme.cpp
+        src/cursortheme.h
         src/layoutapplier.cpp
         src/layoutapplier.h
         src/palette.cpp
@@ -123,6 +127,8 @@ if(BUILD_TESTING)
         src/applier.h
         src/catalog.cpp
         src/catalog.h
+        src/cursortheme.cpp
+        src/cursortheme.h
         src/layoutapplier.cpp
         src/layoutapplier.h
         src/localsource.cpp
@@ -166,4 +172,11 @@ if(BUILD_TESTING)
 
     add_test(NAME qml COMMAND test_qml)
     set_tests_properties(qml PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software")
+
+    # Only the fast core suite: skips loading the whole catalog and window in QML.
+    add_custom_target(test-fast
+        COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} -R "^core$" --output-on-failure
+        DEPENDS test_core
+        USES_TERMINAL
+        COMMENT "Running the fast core test suite")
 endif()

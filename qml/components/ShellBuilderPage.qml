@@ -13,6 +13,34 @@ Item {
     readonly property var colors: page.app.uiColors
 
     property int previewPanel: 0
+    property string previewQuery: ""
+    property var previewApps: ["Firefox", "Files", "Terminal", "Settings", "Music", "Calendar"]
+    property string previewNow: ""
+
+    function previewResults() {
+        var query = page.previewQuery.toLowerCase();
+        return page.previewApps.filter(function(app) {
+            return app.toLowerCase().indexOf(query) >= 0;
+        });
+    }
+
+    function clockText() {
+        return Qt.formatTime(new Date(), page.app.shellClock24h
+            ? (page.app.shellShowSeconds ? "HH:mm:ss" : "HH:mm")
+            : (page.app.shellShowSeconds ? "h:mm:ss AP" : "h:mm AP"));
+    }
+
+    function dateText() {
+        return Qt.formatDate(new Date(), "ddd d MMM");
+    }
+
+    Timer {
+        interval: 1000
+        running: true
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: page.previewNow = page.clockText()
+    }
 
     function zoneList(zone) {
         return page.app.shellZoneList(zone);
@@ -23,6 +51,10 @@ Item {
     }
 
     function chipLabel(id) {
+        if (id === "clock")
+            return page.clockText();
+        if (id === "date")
+            return page.dateText();
         return page.app.shellChip(id);
     }
 
@@ -90,6 +122,57 @@ Item {
                         Layout.fillWidth: true
                         visible: page.app.shellLoadedTheme !== ""
                         text: "Loaded from the “" + page.app.shellLoadedTheme + "” palette."
+                        color: page.colors.faint
+                        font.pixelSize: 9
+                        wrapMode: Text.WordWrap
+                    }
+                }
+
+                ShellCard {
+                    title: "STYLE"
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        Repeater {
+                            model: [
+                                { key: "floating", label: "Floating" },
+                                { key: "edge", label: "Edge" },
+                                { key: "pill", label: "Pill" },
+                                { key: "minimal", label: "Minimal" }
+                            ]
+
+                            Rectangle {
+                                required property var modelData
+
+                                implicitWidth: styleText.implicitWidth + 20
+                                implicitHeight: 27
+                                radius: 14
+                                color: page.app.shellStyle === modelData.key ? page.colors.accent : page.colors.panel2
+                                border.width: 1
+                                border.color: page.app.shellStyle === modelData.key ? page.colors.accent : page.colors.border
+
+                                Text {
+                                    id: styleText
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    color: page.app.shellStyle === modelData.key ? page.colors.onAccent : page.colors.muted
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                }
+
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                TapHandler { onTapped: page.app.applyShellStyle(modelData.key) }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Styles set margin, corner radius, border, shadow and animation speed. The sliders below still fine-tune them."
                         color: page.colors.faint
                         font.pixelSize: 9
                         wrapMode: Text.WordWrap
@@ -168,6 +251,15 @@ Item {
                         onMoved: page.app.shellOpacity = value
                     }
 
+                    ShellSlider {
+                        label: "Animation"
+                        from: 0
+                        to: 300
+                        stepSize: 10
+                        value: page.app.shellAnimationDuration
+                        onMoved: page.app.shellAnimationDuration = Math.round(value)
+                    }
+
                     ShellToggle {
                         text: "Border"
                         value: page.app.shellBorders
@@ -178,6 +270,53 @@ Item {
                         text: "Drop shadow"
                         value: page.app.shellShadow
                         onChanged: page.app.shellShadow = value
+                    }
+
+                }
+
+                ShellCard {
+                    title: "MONITORS"
+
+                    TextField {
+                        Layout.fillWidth: true
+                        placeholderText: "Monitor names, comma separated (blank = first monitor)"
+                        text: page.app.shellMonitors.join(", ")
+                        color: page.colors.text
+                        placeholderTextColor: page.colors.faint
+                        font.pixelSize: 10
+                        selectByMouse: true
+                        onTextEdited: page.app.setShellMonitors(text)
+                        background: Rectangle {
+                            radius: 6
+                            color: page.colors.panel2
+                            border.width: 1
+                            border.color: page.colors.border
+                        }
+                    }
+
+                    TextField {
+                        Layout.fillWidth: true
+                        placeholderText: "Monitors with a bottom bar, comma separated"
+                        text: page.app.shellBottomMonitors.join(", ")
+                        color: page.colors.text
+                        placeholderTextColor: page.colors.faint
+                        font.pixelSize: 10
+                        selectByMouse: true
+                        onTextEdited: page.app.setShellBottomMonitors(text)
+                        background: Rectangle {
+                            radius: 6
+                            color: page.colors.panel2
+                            border.width: 1
+                            border.color: page.colors.border
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Leave both blank to keep the single-bar behaviour. Named monitors get one bar each; the second field moves only those monitors to the bottom."
+                        color: page.colors.faint
+                        font.pixelSize: 9
+                        wrapMode: Text.WordWrap
                     }
 
                     ShellToggle {
@@ -267,6 +406,8 @@ Item {
                                                 elide: Text.ElideRight
                                             }
                                         }
+
+                                        HoverHandler { cursorShape: Qt.PointingHandCursor }
 
                                         TapHandler {
                                             onTapped: page.app.shellSetWidget(widgetRow.modelData.id,
@@ -587,24 +728,23 @@ Item {
                                 anchors.margins: 12
                                 spacing: 7
 
-                                Rectangle {
+                                TextField {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 26
-                                    radius: 6
-                                    color: page.paletteColor("surfaceContainerHigh", "#2a2630")
-
-                                    Text {
-                                        anchors.fill: parent
-                                        anchors.leftMargin: 8
-                                        verticalAlignment: Text.AlignVCenter
-                                        text: "Search applications…"
-                                        color: page.paletteColor("onSurfaceVariant", "#a79caf")
-                                        font.pixelSize: 9
+                                    placeholderText: "Search applications…"
+                                    color: page.paletteColor("onSurface", "#f2ecf5")
+                                    placeholderTextColor: page.paletteColor("onSurfaceVariant", "#a79caf")
+                                    font.pixelSize: 9
+                                    selectByMouse: true
+                                    onTextChanged: page.previewQuery = text
+                                    background: Rectangle {
+                                        radius: 6
+                                        color: page.paletteColor("surfaceContainerHigh", "#2a2630")
                                     }
                                 }
 
                                 Repeater {
-                                    model: ["Firefox", "Files", "Terminal"]
+                                    model: page.previewResults()
 
                                     Rectangle {
                                         required property var modelData
@@ -645,7 +785,7 @@ Item {
 
                                 Text {
                                     Layout.fillWidth: true
-                                    text: "Sunday, 25 October · 12:30"
+                                    text: page.dateText() + "  ·  " + page.clockText()
                                     color: page.paletteColor("onSurface", "#f2ecf5")
                                     font.pixelSize: 14
                                     font.weight: Font.DemiBold
@@ -871,6 +1011,88 @@ Item {
                                 background: null
                             }
                         }
+                    }
+                }
+
+                ShellCard {
+                    title: "BUILDER PRESETS"
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 6
+
+                        TextField {
+                            id: presetField
+                            Layout.fillWidth: true
+                            placeholderText: "preset name"
+                            color: page.colors.text
+                            placeholderTextColor: page.colors.faint
+                            font.pixelSize: 10
+                            selectByMouse: true
+                            background: Rectangle {
+                                radius: 6
+                                color: page.colors.panel2
+                                border.width: 1
+                                border.color: presetField.activeFocus ? page.colors.accent : page.colors.border
+                            }
+                        }
+
+                        ActionButton {
+                            text: "Save"
+                            primary: true
+                            onClicked: page.app.shellSavePreset(presetField.text.toLowerCase().trim())
+                        }
+                    }
+
+                    Repeater {
+                        model: page.app.shellPresets
+
+                        RowLayout {
+                            required property var modelData
+
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.name
+                                    color: page.colors.text
+                                    font.pixelSize: 10
+                                    elide: Text.ElideRight
+                                }
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: (modelData.theme || "Theme") + "  ·  " + (modelData.style || "floating")
+                                    color: page.colors.faint
+                                    font.pixelSize: 9
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            ActionButton {
+                                text: "Load"
+                                onClicked: page.app.shellLoadPreset(modelData.name)
+                            }
+
+                            ActionButton {
+                                text: "Delete"
+                                danger: true
+                                onClicked: page.app.shellDeletePreset(modelData.name)
+                            }
+                        }
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Presets keep the bar style, geometry, typography, monitors and entries, and can be reused with another palette."
+                        color: page.colors.faint
+                        font.pixelSize: 9
+                        wrapMode: Text.WordWrap
                     }
                 }
 

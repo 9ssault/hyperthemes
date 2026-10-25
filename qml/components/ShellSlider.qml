@@ -22,6 +22,8 @@ RowLayout {
         return control.appTheme && control.appTheme[key] !== undefined ? control.appTheme[key] : fallback;
     }
 
+    HoverHandler { cursorShape: Qt.PointingHandCursor }
+
     Layout.fillWidth: true
     spacing: 10
 

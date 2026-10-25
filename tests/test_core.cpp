@@ -3,6 +3,7 @@
 #include "applier.h"
 #include "catalog.h"
 #include "cli.h"
+#include "cursortheme.h"
 #include "layoutapplier.h"
 #include "palette.h"
 #include "palettegenerator.h"
@@ -28,6 +29,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QtEndian>
 
 namespace {
 void writeFile(const QString &path, const QString &content)
@@ -206,6 +208,108 @@ private slots:
         QVERIFY(!readFile(config + QStringLiteral("/hypr/hyprland.conf")).contains(QStringLiteral("hyperthemes.conf")));
     }
 
+    void cursorThemeIsAValidXcursor()
+    {
+        const QHash<QString, QByteArray> files = CursorTheme::build(Theme::fromMap(sampleTheme()));
+        QVERIFY(files.contains(QStringLiteral("index.theme")));
+        QVERIFY(files.contains(QStringLiteral("cursors/left_ptr")));
+        QVERIFY(files.contains(QStringLiteral("cursors/hand2")));
+        QVERIFY(files.contains(QStringLiteral("cursors/xterm")));
+        QVERIFY(files.contains(QStringLiteral("cursors/not-allowed")));
+        QCOMPARE(files.value(QStringLiteral("cursors/default")),
+                 files.value(QStringLiteral("cursors/left_ptr")));
+        QVERIFY(files.value(QStringLiteral("index.theme")).contains("Name=HyperThemes"));
+        QVERIFY(files.value(QStringLiteral("index.theme")).contains("Inherits=Adwaita"));
+
+        const QByteArray data = files.value(QStringLiteral("cursors/left_ptr"));
+        const auto read = [&data](int offset) {
+            return qFromLittleEndian<quint32>(reinterpret_cast<const uchar *>(data.constData() + offset));
+        };
+        QCOMPARE(data.left(4), QByteArrayLiteral("Xcur"));
+        QCOMPARE(read(4), 16u);
+        QCOMPARE(read(8), 0x00010000u);
+        const quint32 count = read(12);
+        QVERIFY(count >= 3);
+
+        bool sawPrimary = false;
+        quint32 offset = 16 + 12 * count;
+        for (quint32 i = 0; i < count; ++i) {
+            const int toc = 16 + int(i) * 12;
+            QCOMPARE(read(toc), 0xfffd0002u);
+            const quint32 nominal = read(toc + 4);
+            const quint32 position = read(toc + 8);
+            QCOMPARE(position, offset);
+            QCOMPARE(read(int(position)), 36u);
+            QCOMPARE(read(int(position) + 4), 0xfffd0002u);
+            QCOMPARE(read(int(position) + 8), nominal);
+            QCOMPARE(read(int(position) + 12), 1u);
+            const quint32 width = read(int(position) + 16);
+            const quint32 height = read(int(position) + 20);
+            QCOMPARE(width, nominal);
+            QCOMPARE(height, nominal);
+            QVERIFY(read(int(position) + 24) < width);
+            QVERIFY(read(int(position) + 28) < height);
+
+            const quint32 end = position + 36 + width * height * 4;
+            QVERIFY(end <= quint32(data.size()));
+            for (quint32 pixel = 0; pixel < width * height; ++pixel) {
+                if (read(int(position + 36 + pixel * 4)) == 0xffff0000u)
+                    sawPrimary = true;
+            }
+            offset = end;
+        }
+        QCOMPARE(offset, quint32(data.size()));
+        QVERIFY2(sawPrimary, "the pointer did not use the theme's primary colour");
+    }
+
+    void applyCursorWritesThemeAndSettings()
+    {
+        QDir(Paths::configHome()).removeRecursively();
+        QDir(Paths::dataHome()).removeRecursively();
+        QDir(Paths::home() + QStringLiteral("/.icons")).removeRecursively();
+
+        const QString gtkSettings = Paths::configHome() + QStringLiteral("/gtk-3.0/settings.ini");
+        writeFile(gtkSettings, QStringLiteral("[Settings]\ngtk-theme-name=Adwaita\n"));
+
+        Applier applier;
+        const QVariantMap plan = applier.dryRun(sampleTheme(), {QStringLiteral("cursor")}, false);
+        QVERIFY2(plan.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(plan.value(QStringLiteral("error")).toString()));
+        const QString planned = plan.value(QStringLiteral("files")).toStringList().join(QLatin1Char('\n'));
+        QVERIFY(planned.contains(QStringLiteral("hyperthemes/cursors/left_ptr")));
+        QVERIFY(planned.contains(QStringLiteral(".icons/default/index.theme")));
+        QVERIFY(!QFileInfo::exists(CursorTheme::installDir() + QStringLiteral("/cursors/left_ptr")));
+
+        const QVariantMap applied = applier.apply(sampleTheme(), {QStringLiteral("cursor")}, false);
+        QVERIFY2(applied.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(applied.value(QStringLiteral("error")).toString() + QStringLiteral(" / ")
+                            + applied.value(QStringLiteral("warnings")).toStringList().join(QStringLiteral("; "))));
+
+        QVERIFY(QFileInfo::exists(CursorTheme::installDir() + QStringLiteral("/cursors/left_ptr")));
+        QVERIFY(QFileInfo::exists(CursorTheme::installDir() + QStringLiteral("/cursors/hand2")));
+        QVERIFY(readFile(CursorTheme::installDir() + QStringLiteral("/index.theme"))
+                    .contains(QStringLiteral("Inherits=Adwaita")));
+        QVERIFY(readFile(CursorTheme::defaultThemePath()).contains(QStringLiteral("Inherits=hyperthemes")));
+
+        const QString gtk = readFile(gtkSettings);
+        QVERIFY(gtk.contains(QStringLiteral("gtk-theme-name=Adwaita")));
+        QVERIFY(gtk.contains(QStringLiteral("gtk-cursor-theme-name=hyperthemes")));
+        QVERIFY(readFile(Paths::configHome() + QStringLiteral("/gtk-4.0/settings.ini"))
+                    .contains(QStringLiteral("gtk-cursor-theme-name=hyperthemes")));
+        QVERIFY(readFile(Paths::configHome() + QStringLiteral("/kcminputrc"))
+                    .contains(QStringLiteral("cursorTheme=hyperthemes")));
+        QVERIFY(readFile(Paths::configHome()
+                         + QStringLiteral("/environment.d/90-hyperthemes-cursor.conf"))
+                    .contains(QStringLiteral("XCURSOR_THEME=hyperthemes")));
+
+        const QVariantMap restored = applier.rollback(applied.value(QStringLiteral("backup")).toString());
+        QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(restored.value(QStringLiteral("error")).toString()));
+        QVERIFY(!QFileInfo::exists(CursorTheme::installDir() + QStringLiteral("/cursors/left_ptr")));
+        QVERIFY(!QFileInfo::exists(CursorTheme::defaultThemePath()));
+        QCOMPARE(readFile(gtkSettings), QStringLiteral("[Settings]\ngtk-theme-name=Adwaita\n"));
+    }
+
     void applyAndRollbackUserTargets()
     {
         const QString config = Paths::configHome();
@@ -266,7 +370,8 @@ private slots:
             const QStringList targets = theme.value(QStringLiteral("targets")).toStringList();
             QVERIFY(!targets.isEmpty());
             if (!targets.contains(QStringLiteral("btop")) || !targets.contains(QStringLiteral("zellij"))
-                || !targets.contains(QStringLiteral("hyprland")))
+                || !targets.contains(QStringLiteral("hyprland"))
+                || !targets.contains(QStringLiteral("cursor")))
                 hasExtraTargets = false;
             QVERIFY(!theme.value(QStringLiteral("palette")).toMap().isEmpty());
             categories.insert(theme.value(QStringLiteral("category")).toString());
@@ -300,6 +405,10 @@ private slots:
         config.insert(QStringLiteral("borders"), false);
         config.insert(QStringLiteral("shadow"), false);
         config.insert(QStringLiteral("workspaceCount"), 3);
+        config.insert(QStringLiteral("style"), QStringLiteral("pill"));
+        config.insert(QStringLiteral("animationDuration"), 180);
+        config.insert(QStringLiteral("monitors"), QStringList{QStringLiteral("DP-1"), QStringLiteral("HDMI-A-1")});
+        config.insert(QStringLiteral("bottomMonitors"), QStringList{QStringLiteral("HDMI-A-1")});
 
         const QVariantMap result = builder.build(config);
         QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
@@ -328,6 +437,10 @@ private slots:
         QVERIFY(theme.contains(QStringLiteral("borderWidth: 0")));
         QVERIFY(theme.contains(QStringLiteral("shadow: false")));
         QVERIFY(theme.contains(QStringLiteral("workspaceCount: 3")));
+        QVERIFY(theme.contains(QStringLiteral("style: \"pill\"")));
+        QVERIFY(theme.contains(QStringLiteral("animationDuration: 180")));
+        QVERIFY(theme.contains(QStringLiteral("monitors: [\"DP-1\", \"HDMI-A-1\"]")));
+        QVERIFY(theme.contains(QStringLiteral("bottomMonitors: [\"HDMI-A-1\"]")));
         QVERIFY(theme.contains(QStringLiteral("sourceMode: \"dark\"")));
         QVERIFY(theme.contains(QStringLiteral("Test Theme")));
 
@@ -365,7 +478,7 @@ private slots:
         const QString bar = readFile(dir + QStringLiteral("/bar/Bar.qml"));
         QVERIFY(bar.contains(QStringLiteral("Variants")));
         QVERIFY(bar.contains(QStringLiteral("PanelWindow")));
-        QVERIFY(bar.contains(QStringLiteral("top: theme.position !== \"bottom\"")));
+        QVERIFY(bar.contains(QStringLiteral("top: theme.barPosition(modelData.name) !== \"bottom\"")));
         QVERIFY(bar.contains(QStringLiteral("anchors.horizontalCenter")));
         QVERIFY(bar.contains(QStringLiteral("SystemTray.items")));
         QVERIFY(bar.contains(QStringLiteral("Pipewire.defaultAudioSink")));
@@ -450,7 +563,7 @@ private slots:
         QVERIFY(bottomBar.contains(QStringLiteral("Quickshell.I3")));
         QVERIFY(bottomBar.contains(QStringLiteral("I3.workspaces")));
         QVERIFY(!bottomBar.contains(QStringLiteral("Quickshell.Hyprland")));
-        QVERIFY(bottomBar.contains(QStringLiteral("bottom: theme.position === \"bottom\"")));
+        QVERIFY(bottomBar.contains(QStringLiteral("bottom: theme.barPosition(modelData.name) === \"bottom\"")));
         QVERIFY(!bottomBar.contains(QStringLiteral("top: true")));
         QVERIFY(!bottomBar.contains(QStringLiteral("SystemTray.items")));
         QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
@@ -501,11 +614,13 @@ private slots:
         config.insert(QStringLiteral("zones"), QVariantMap{
             {QStringLiteral("left"), QStringList{QStringLiteral("logo"), QStringLiteral("workspaces"),
                                                  QStringLiteral("launcher"), QStringLiteral("clock"),
-                                                 QStringLiteral("date")}},
-            {QStringLiteral("center"), QStringList{QStringLiteral("media"), QStringLiteral("volume")}},
+                                                 QStringLiteral("date"), QStringLiteral("separator")}},
+            {QStringLiteral("center"), QStringList{QStringLiteral("media"), QStringLiteral("volume"),
+                                                   QStringLiteral("spacer")}},
             {QStringLiteral("right"), QStringList{QStringLiteral("network"), QStringLiteral("bluetooth"),
                                                   QStringLiteral("tray"), QStringLiteral("battery"),
-                                                  QStringLiteral("statusIcons"), QStringLiteral("power")}},
+                                                  QStringLiteral("statusIcons"), QStringLiteral("systemLoad"),
+                                                  QStringLiteral("power")}},
         });
 
         const QVariantMap result = builder.build(config);
@@ -521,7 +636,8 @@ private slots:
             QStringLiteral("networkWidget"), QStringLiteral("bluetoothWidget"),
             QStringLiteral("SystemTray.items"), QStringLiteral("batteryWidget"),
             QStringLiteral("statusHover"), QStringLiteral("powerHover"),
-            QStringLiteral("launcherHover"),
+            QStringLiteral("launcherHover"), QStringLiteral("loadLabel"),
+            QStringLiteral("SplitParser"), QStringLiteral("implicitWidth: 14"),
         };
         for (const QString &marker : markers)
             QVERIFY2(bar.contains(marker), qPrintable(marker));
@@ -647,6 +763,7 @@ private slots:
         QCOMPARE(targets.error, QString());
         QVERIFY(targets.output.contains(QStringLiteral("btop")));
         QVERIFY(targets.output.contains(QStringLiteral("hyprland")));
+        QVERIFY(targets.output.contains(QStringLiteral("cursor")));
 
         const Cli::Result filtered = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--list-themes"),
                                                QStringLiteral("dracula")});
@@ -661,8 +778,14 @@ private slots:
 
         QVERIFY(Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("--apply"),
                                 QStringLiteral("Dracula")}));
+        QVERIFY(Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("--dry-run"),
+                                QStringLiteral("--apply")}));
         QVERIFY(!Cli::requested({QStringLiteral("hyperthemes"), QStringLiteral("-platform"),
                                  QStringLiteral("offscreen")}));
+
+        const Cli::Result configs = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--list-configs")});
+        QCOMPARE(configs.exitCode, 0);
+        QCOMPARE(configs.error, QString());
     }
 
     void cliAppliesAThemeToChosenTargets()
@@ -691,6 +814,13 @@ private slots:
         const QString id = chosen.value(QStringLiteral("id")).toString();
         const QString name = chosen.value(QStringLiteral("name")).toString();
 
+        const Cli::Result planned = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"), id,
+                                              QStringLiteral("--target"), QStringLiteral("gtk"),
+                                              QStringLiteral("--dry-run")});
+        QCOMPARE(planned.exitCode, 0);
+        QVERIFY(planned.output.contains(QStringLiteral("Would write")));
+        QVERIFY(!QFileInfo::exists(Paths::configHome() + QStringLiteral("/gtk-3.0/hyperthemes.css")));
+
         const Cli::Result applied = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"), id,
                                               QStringLiteral("--target"), QStringLiteral("gtk")});
         QCOMPARE(applied.exitCode, 0);
@@ -701,6 +831,71 @@ private slots:
         const Cli::Result byName = Cli::run({QStringLiteral("hyperthemes"), QStringLiteral("--apply"), name,
                                              QStringLiteral("--targets"), QStringLiteral("gtk")});
         QCOMPARE(byName.exitCode, 0);
+    }
+
+    void dryRunPlansWithoutWriting()
+    {
+        QDir(Paths::configHome()).removeRecursively();
+        Applier applier;
+        const QStringList before = applier.backups();
+
+        const QVariantMap plan = applier.dryRun(sampleTheme(), {QStringLiteral("gtk")}, false);
+        QVERIFY2(plan.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(plan.value(QStringLiteral("error")).toString()));
+        QVERIFY(plan.value(QStringLiteral("dryRun")).toBool());
+        QVERIFY(plan.value(QStringLiteral("backup")).toString().isEmpty());
+        const QStringList files = plan.value(QStringLiteral("files")).toStringList();
+        QVERIFY2(!files.isEmpty(), "the dry run listed no files");
+        QVERIFY(files.join(QLatin1Char('\n')).contains(QStringLiteral("hyperthemes.css")));
+        QVERIFY(!QFileInfo::exists(Paths::configHome() + QStringLiteral("/gtk-3.0/hyperthemes.css")));
+        QCOMPARE(applier.backups(), before);
+
+        const QVariantList results = plan.value(QStringLiteral("results")).toList();
+        QCOMPARE(results.size(), 1);
+        QCOMPARE(results.first().toMap().value(QStringLiteral("target")).toString(), QStringLiteral("gtk"));
+
+        const QVariantMap applied = applier.apply(sampleTheme(), {QStringLiteral("gtk")}, false);
+        QVERIFY(applied.value(QStringLiteral("ok")).toBool());
+        QVERIFY(QFileInfo::exists(Paths::configHome() + QStringLiteral("/gtk-3.0/hyperthemes.css")));
+    }
+
+    void builderPresetsRoundTrip()
+    {
+        ShellBuilder builder;
+        QVariantMap config = builder.defaults();
+        config.insert(QStringLiteral("name"), QStringLiteral("preset-source"));
+        config.insert(QStringLiteral("palette"), sampleTheme().value(QStringLiteral("palette")));
+        config.insert(QStringLiteral("themeName"), QStringLiteral("Test Theme"));
+        config.insert(QStringLiteral("style"), QStringLiteral("pill"));
+        config.insert(QStringLiteral("monitors"), QStringList{QStringLiteral("DP-1")});
+
+        QVERIFY(!builder.savePreset(QStringLiteral("Bad Name"), config).value(QStringLiteral("ok")).toBool());
+
+        const QVariantMap saved = builder.savePreset(QStringLiteral("desk"), config);
+        QVERIFY2(saved.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(saved.value(QStringLiteral("error")).toString()));
+
+        bool listed = false;
+        for (const QVariant &entry : builder.presets()) {
+            const QVariantMap preset = entry.toMap();
+            if (preset.value(QStringLiteral("name")).toString() == QStringLiteral("desk")) {
+                listed = true;
+                QCOMPARE(preset.value(QStringLiteral("style")).toString(), QStringLiteral("pill"));
+                QCOMPARE(preset.value(QStringLiteral("theme")).toString(), QStringLiteral("Test Theme"));
+            }
+        }
+        QVERIFY(listed);
+
+        const QVariantMap loaded = builder.loadPreset(QStringLiteral("desk"));
+        QVERIFY2(loaded.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(loaded.value(QStringLiteral("error")).toString()));
+        const QVariantMap loadedConfig = loaded.value(QStringLiteral("config")).toMap();
+        QCOMPARE(loadedConfig.value(QStringLiteral("style")).toString(), QStringLiteral("pill"));
+        QCOMPARE(loadedConfig.value(QStringLiteral("monitors")).toStringList(), QStringList{QStringLiteral("DP-1")});
+        QVERIFY(!loadedConfig.value(QStringLiteral("palette")).toMap().isEmpty());
+
+        QVERIFY(builder.deletePreset(QStringLiteral("desk")).value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.loadPreset(QStringLiteral("desk")).value(QStringLiteral("ok")).toBool());
     }
 
     void wallpaperOnlyApplyChecksTheFile()

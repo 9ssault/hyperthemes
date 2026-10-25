@@ -20,6 +20,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 #include <QVector>
+#include <utility>
 
 namespace {
 
@@ -38,6 +39,10 @@ struct Config {
     bool showSeconds = false;
     bool borders = true;
     bool shadow = true;
+    QString style = QStringLiteral("floating");
+    int animationDuration = 120;
+    QStringList monitors;
+    QStringList bottomMonitors;
     QString fontFamily;
     int fontSize = 12;
     int iconSize = 16;
@@ -60,6 +65,14 @@ QString qmlString(const QString &value)
     escaped.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
     escaped.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
     return QLatin1Char('"') + escaped + QLatin1Char('"');
+}
+
+QString qmlStringList(const QStringList &values)
+{
+    QStringList quoted;
+    for (const QString &value : values)
+        quoted << qmlString(value);
+    return QLatin1Char('[') + quoted.join(QStringLiteral(", ")) + QLatin1Char(']');
 }
 
 QString pad(const QString &text, int spaces)
@@ -145,12 +158,12 @@ RowLayout {
             implicitHeight: 9
             radius: 4
             color: active ? theme.primary : (modelData.urgent ? theme.error : theme.surfaceHigh)
-            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+            Behavior on implicitWidth { NumberAnimation { duration: %1 } }
             TapHandler { onTapped: Hyprland.dispatch("workspace " + modelData.id) }
         }
     }
 }
-)QML");
+)QML").arg(config.animationDuration);
         }
         if (config.compositor == QLatin1String("sway")) {
             return QStringLiteral(R"QML(
@@ -166,12 +179,12 @@ RowLayout {
             implicitHeight: 9
             radius: 4
             color: modelData.focused ? theme.primary : (modelData.urgent ? theme.error : theme.surfaceHigh)
-            Behavior on implicitWidth { NumberAnimation { duration: 120 } }
+            Behavior on implicitWidth { NumberAnimation { duration: %1 } }
             TapHandler { onTapped: modelData.activate() }
         }
     }
 }
-)QML");
+)QML").arg(config.animationDuration);
         }
         return QStringLiteral(R"QML(
 RowLayout {
@@ -186,6 +199,54 @@ RowLayout {
             radius: 4
             color: index === 0 ? theme.primary : theme.surfaceHigh
         }
+    }
+}
+)QML");
+    }
+    if (id == QLatin1String("separator")) {
+        return QStringLiteral(R"QML(
+Rectangle {
+    implicitWidth: 1
+    implicitHeight: theme.iconSize
+    color: theme.outline
+}
+)QML");
+    }
+    if (id == QLatin1String("spacer")) {
+        return QStringLiteral(R"QML(
+Item {
+    implicitWidth: 14
+    implicitHeight: 1
+}
+)QML");
+    }
+    if (id == QLatin1String("systemLoad")) {
+        return QStringLiteral(R"QML(
+RowLayout {
+    spacing: 4
+
+    Text {
+        id: loadLabel
+        text: "load …"
+        color: theme.muted
+        font.family: theme.fontFamily
+        font.pixelSize: theme.fontSize - 1
+    }
+
+    Process {
+        id: loadProcess
+        command: ["sh", "-c", "cut -d' ' -f1 /proc/loadavg"]
+        running: true
+        stdout: SplitParser {
+            onRead: function(data) { loadLabel.text = "load " + String(data).trim(); }
+        }
+    }
+
+    Timer {
+        interval: 5000
+        running: true
+        repeat: true
+        onTriggered: loadProcess.running = true
     }
 }
 )QML");
@@ -586,6 +647,12 @@ QString themeFile(const Config &config)
     text += QStringLiteral("    readonly property string sourceMode: ") + qmlString(config.themeMode) + QLatin1Char('\n');
     text += QStringLiteral("    readonly property string position: ") + qmlString(config.position) + QLatin1Char('\n');
     text += QStringLiteral("    readonly property bool barPerMonitor: ") + boolText(config.barPerMonitor) + QLatin1Char('\n');
+    text += QStringLiteral("    readonly property string style: ") + qmlString(config.style) + QLatin1Char('\n');
+    text += QStringLiteral("    readonly property int animationDuration: %1\n").arg(config.animationDuration);
+    text += QStringLiteral("    readonly property var monitors: ") + qmlStringList(config.monitors) + QLatin1Char('\n');
+    text += QStringLiteral("    readonly property var bottomMonitors: ") + qmlStringList(config.bottomMonitors) + QLatin1Char('\n');
+    text += QStringLiteral("    function hasBar(name) { return monitors.length === 0 || monitors.indexOf(name) >= 0; }\n");
+    text += QStringLiteral("    function barPosition(name) { return bottomMonitors.indexOf(name) >= 0 ? \"bottom\" : position; }\n");
     text += QStringLiteral("\n");
     text += QStringLiteral("    // Geometry\n");
     text += QStringLiteral("    readonly property int barHeight: %1\n").arg(config.barHeight);
@@ -662,6 +729,8 @@ QString barFile(const Config &config)
         text += QStringLiteral("import Quickshell.Networking\n");
     if (usesWidget(config, QStringLiteral("bluetooth")) || usesWidget(config, QStringLiteral("statusIcons")))
         text += QStringLiteral("import Quickshell.Bluetooth\n");
+    if (usesWidget(config, QStringLiteral("systemLoad")))
+        text += QStringLiteral("import Quickshell.Io\n");
     if (usesWidget(config, QStringLiteral("workspaces")) && config.compositor == QLatin1String("hyprland"))
         text += QStringLiteral("import Quickshell.Hyprland\n");
     if (usesWidget(config, QStringLiteral("workspaces")) && config.compositor == QLatin1String("sway"))
@@ -672,21 +741,23 @@ QString barFile(const Config &config)
     text += QStringLiteral("    required property var theme\n");
     text += QStringLiteral("    signal launcherRequested()\n");
     text += QStringLiteral("    signal dashboardRequested()\n\n");
-    text += QStringLiteral("    model: theme.barPerMonitor\n");
-    text += QStringLiteral("        ? Quickshell.screens\n");
-    text += QStringLiteral("        : (Quickshell.screens.length > 0 ? [Quickshell.screens[0]] : [])\n\n");
+    text += QStringLiteral("    model: theme.monitors.length > 0\n");
+    text += QStringLiteral("        ? Quickshell.screens.filter(function(screen) { return theme.hasBar(screen.name); })\n");
+    text += QStringLiteral("        : (theme.barPerMonitor\n");
+    text += QStringLiteral("            ? Quickshell.screens\n");
+    text += QStringLiteral("            : (Quickshell.screens.length > 0 ? [Quickshell.screens[0]] : []))\n\n");
     text += QStringLiteral("    delegate: PanelWindow {\n");
     text += QStringLiteral("        required property var modelData\n\n");
     text += QStringLiteral("        screen: modelData\n");
     text += QStringLiteral("        anchors {\n");
-    text += QStringLiteral("            top: theme.position !== \"bottom\"\n");
-    text += QStringLiteral("            bottom: theme.position === \"bottom\"\n");
+    text += QStringLiteral("            top: theme.barPosition(modelData.name) !== \"bottom\"\n");
+    text += QStringLiteral("            bottom: theme.barPosition(modelData.name) === \"bottom\"\n");
     text += QStringLiteral("            left: true\n");
     text += QStringLiteral("            right: true\n");
     text += QStringLiteral("        }\n");
     text += QStringLiteral("        margins {\n");
-    text += QStringLiteral("            top: theme.position === \"bottom\" ? 0 : theme.margin\n");
-    text += QStringLiteral("            bottom: theme.position === \"bottom\" ? theme.margin : 0\n");
+    text += QStringLiteral("            top: theme.barPosition(modelData.name) === \"bottom\" ? 0 : theme.margin\n");
+    text += QStringLiteral("            bottom: theme.barPosition(modelData.name) === \"bottom\" ? theme.margin : 0\n");
     text += QStringLiteral("            left: theme.margin\n");
     text += QStringLiteral("            right: theme.margin\n");
     text += QStringLiteral("        }\n");
@@ -1170,7 +1241,8 @@ QStringList knownWidgets()
         QStringLiteral("clock"), QStringLiteral("date"), QStringLiteral("media"),
         QStringLiteral("volume"), QStringLiteral("network"), QStringLiteral("bluetooth"),
         QStringLiteral("tray"), QStringLiteral("battery"), QStringLiteral("statusIcons"),
-        QStringLiteral("power"),
+        QStringLiteral("power"), QStringLiteral("separator"), QStringLiteral("spacer"),
+        QStringLiteral("systemLoad"),
     };
 }
 
@@ -1202,6 +1274,29 @@ Config parseConfig(const QVariantMap &map)
     config.showSeconds = map.value(QStringLiteral("showSeconds"), false).toBool();
     config.borders = map.value(QStringLiteral("borders"), true).toBool();
     config.shadow = map.value(QStringLiteral("shadow"), true).toBool();
+    config.style = map.value(QStringLiteral("style"), QStringLiteral("floating")).toString();
+    if (config.style != QLatin1String("floating") && config.style != QLatin1String("edge")
+        && config.style != QLatin1String("pill") && config.style != QLatin1String("minimal"))
+        config.style = QStringLiteral("floating");
+    config.animationDuration = qBound(0, map.value(QStringLiteral("animationDuration"), 120).toInt(), 500);
+    const auto appendMonitors = [](QStringList &target, const QVariant &value) {
+        QStringList names;
+        const QVariantList list = value.toList();
+        if (!list.isEmpty()) {
+            for (const QVariant &entry : list)
+                names << entry.toString();
+        } else {
+            for (const QString &part : value.toString().split(QLatin1Char(','), Qt::SkipEmptyParts))
+                names << part;
+        }
+        for (const QString &monitor : std::as_const(names)) {
+            const QString name = monitor.trimmed();
+            if (!name.isEmpty() && !target.contains(name))
+                target << name;
+        }
+    };
+    appendMonitors(config.monitors, map.value(QStringLiteral("monitors")));
+    appendMonitors(config.bottomMonitors, map.value(QStringLiteral("bottomMonitors")));
     config.fontFamily = map.value(QStringLiteral("fontFamily")).toString().trimmed();
     config.fontSize = qBound(8, map.value(QStringLiteral("fontSize"), 12).toInt(), config.barHeight - 8);
     const int iconMax = qMax(10, config.barHeight - 14);
@@ -1250,6 +1345,10 @@ QVariantMap configMap(const Config &config, bool withIdentity)
     map.insert(QStringLiteral("showSeconds"), config.showSeconds);
     map.insert(QStringLiteral("borders"), config.borders);
     map.insert(QStringLiteral("shadow"), config.shadow);
+    map.insert(QStringLiteral("style"), config.style);
+    map.insert(QStringLiteral("animationDuration"), config.animationDuration);
+    map.insert(QStringLiteral("monitors"), config.monitors);
+    map.insert(QStringLiteral("bottomMonitors"), config.bottomMonitors);
     map.insert(QStringLiteral("fontFamily"), config.fontFamily);
     map.insert(QStringLiteral("fontSize"), config.fontSize);
     map.insert(QStringLiteral("iconSize"), config.iconSize);
@@ -1276,9 +1375,10 @@ QStringList storedKeys()
         QStringLiteral("margin"), QStringLiteral("radius"), QStringLiteral("opacity"),
         QStringLiteral("gap"), QStringLiteral("barPerMonitor"), QStringLiteral("launcher"),
         QStringLiteral("dashboard"), QStringLiteral("clock24h"), QStringLiteral("showSeconds"),
-        QStringLiteral("borders"), QStringLiteral("shadow"), QStringLiteral("fontFamily"),
-        QStringLiteral("fontSize"), QStringLiteral("iconSize"), QStringLiteral("workspaceCount"),
-        QStringLiteral("compositor"), QStringLiteral("zones"),
+        QStringLiteral("borders"), QStringLiteral("shadow"), QStringLiteral("style"),
+        QStringLiteral("animationDuration"), QStringLiteral("monitors"), QStringLiteral("bottomMonitors"),
+        QStringLiteral("fontFamily"), QStringLiteral("fontSize"), QStringLiteral("iconSize"),
+        QStringLiteral("workspaceCount"), QStringLiteral("compositor"), QStringLiteral("zones"),
     };
 }
 
@@ -2121,4 +2221,112 @@ void ShellBuilder::resetSettings()
                     QStringLiteral("HyperThemes"), QStringLiteral("HyperThemes"));
     store.remove(QStringLiteral("shellBuilder/config"));
     store.sync();
+}
+
+QVariantMap ShellBuilder::savePreset(const QString &name, const QVariantMap &config)
+{
+    if (!validName(name)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"),
+                 QStringLiteral("Use 1–32 lowercase letters, digits, dots, dashes or underscores for the preset name.")}};
+    }
+
+    const Config parsed = parseConfig(config);
+    if (parsed.palette.isEmpty()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("Select a theme before saving a builder preset.")}};
+    }
+
+    const QString dir = Paths::stateDir() + QStringLiteral("/shell-presets");
+    QDir().mkpath(dir);
+
+    QJsonObject root;
+    root.insert(QStringLiteral("generator"), QStringLiteral("HyperThemes"));
+    root.insert(QStringLiteral("name"), name);
+    root.insert(QStringLiteral("created"), QDateTime::currentDateTime().toString(Qt::ISODate));
+    root.insert(QStringLiteral("config"), QJsonObject::fromVariantMap(configMap(parsed, true)));
+
+    QSaveFile file(dir + QLatin1Char('/') + name + QStringLiteral(".json"));
+    if (!file.open(QIODevice::WriteOnly)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("The preset could not be written.")}};
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("The preset could not be committed.")}};
+    }
+
+    return {{QStringLiteral("ok"), true}, {QStringLiteral("name"), name}};
+}
+
+QVariantList ShellBuilder::presets() const
+{
+    QVariantList result;
+    const QDir dir(Paths::stateDir() + QStringLiteral("/shell-presets"));
+    const QStringList files = dir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
+    for (const QString &file : files) {
+        QFile handle(dir.filePath(file));
+        if (!handle.open(QIODevice::ReadOnly))
+            continue;
+        const QJsonObject root = QJsonDocument::fromJson(handle.readAll()).object();
+        const QVariantMap stored = root.value(QStringLiteral("config")).toObject().toVariantMap();
+        result.append(QVariantMap{
+            {QStringLiteral("name"), file.chopped(5)},
+            {QStringLiteral("created"), root.value(QStringLiteral("created")).toString()},
+            {QStringLiteral("style"), stored.value(QStringLiteral("style")).toString()},
+            {QStringLiteral("theme"), stored.value(QStringLiteral("themeName")).toString()},
+            {QStringLiteral("monitors"), stored.value(QStringLiteral("monitors")).toStringList()},
+        });
+    }
+    return result;
+}
+
+QVariantMap ShellBuilder::loadPreset(const QString &name)
+{
+    if (!validName(name)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("That preset name is not valid.")}};
+    }
+
+    QFile file(Paths::stateDir() + QStringLiteral("/shell-presets/") + name + QStringLiteral(".json"));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("That preset no longer exists.")}};
+    }
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    const QVariantMap stored = root.value(QStringLiteral("config")).toObject().toVariantMap();
+    if (stored.value(QStringLiteral("palette")).toMap().isEmpty()) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("The preset has no palette; save it again from a theme.")}};
+    }
+
+    QVariantMap config = defaults();
+    for (auto it = stored.cbegin(); it != stored.cend(); ++it)
+        config.insert(it.key(), it.value());
+    config.insert(QStringLiteral("name"), name);
+
+    return {{QStringLiteral("ok"), true},
+            {QStringLiteral("config"), config},
+            {QStringLiteral("created"), root.value(QStringLiteral("created")).toString()},
+            {QStringLiteral("name"), name}};
+}
+
+QVariantMap ShellBuilder::deletePreset(const QString &name)
+{
+    if (!validName(name)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("That preset name is not valid.")}};
+    }
+
+    const QString path = Paths::stateDir() + QStringLiteral("/shell-presets/") + name + QStringLiteral(".json");
+    if (!QFileInfo::exists(path)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("That preset no longer exists.")}};
+    }
+    if (!QFile::remove(path)) {
+        return {{QStringLiteral("ok"), false},
+                {QStringLiteral("error"), QStringLiteral("The preset could not be deleted.")}};
+    }
+    return {{QStringLiteral("ok"), true}, {QStringLiteral("name"), name}};
 }

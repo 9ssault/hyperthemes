@@ -8,10 +8,13 @@ Item {
     required property var item
     required property bool selected
     property bool current: false
+    property bool favorite: false
+    property bool compact: false
     signal activated()
+    signal favoriteToggled()
 
     implicitWidth: 280
-    implicitHeight: 248
+    implicitHeight: compact ? 202 : 248
 
     Accessible.role: Accessible.Button
     Accessible.name: item ? item.name : ""
@@ -94,7 +97,7 @@ Item {
             anchors.top: parent.top
             anchors.left: parent.left
             anchors.right: parent.right
-            height: 108
+            height: root.compact ? 82 : 108
             radius: 12
 
             gradient: Gradient {
@@ -146,6 +149,24 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
+
+                Rectangle {
+                    implicitWidth: 22
+                    implicitHeight: 22
+                    radius: 11
+                    color: root.favorite ? "#55cfbcff" : "#33120e18"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: root.favorite ? "★" : "☆"
+                        color: root.favorite ? root.hex("primary", "#cfbcff") : "#e8e2ee"
+                        font.pixelSize: 14
+                    }
+
+                    TapHandler {
+                        onTapped: root.favoriteToggled()
+                    }
+                }
 
                 RowLayout {
                     spacing: 3
@@ -207,7 +228,7 @@ Item {
                 color: root.readable("onSurfaceVariant", "#aaa0b3")
                 font.pixelSize: 11
                 lineHeight: 1.25
-                maximumLineCount: 2
+                maximumLineCount: root.compact ? 1 : 2
                 wrapMode: Text.WordWrap
                 elide: Text.ElideRight
             }
@@ -253,6 +274,7 @@ Item {
 
     HoverHandler {
         id: hover
+        cursorShape: Qt.PointingHandCursor
     }
 
     TapHandler {

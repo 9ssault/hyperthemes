@@ -15,6 +15,7 @@ public:
     explicit Applier(QObject *parent = nullptr);
 
     Q_INVOKABLE QVariantMap apply(const QVariantMap &theme, const QStringList &targets, bool systemWide);
+    Q_INVOKABLE QVariantMap dryRun(const QVariantMap &theme, const QStringList &targets, bool systemWide);
     Q_INVOKABLE QVariantMap rollback(const QString &backupId = {});
     Q_INVOKABLE QVariantMap setWallpaper(const QString &path);
     Q_INVOKABLE QStringList backups() const;
@@ -37,16 +38,21 @@ private:
         QString dir;
         QString themeId;
         bool system = false;
+        bool dryRun = false;
         QVector<Entry> entries;
         QStringList applied;
         QStringList warnings;
     };
 
+    QVariantMap applyInternal(const QVariantMap &theme, const QStringList &targets,
+                              bool systemWide, bool dryRun);
     bool backupFile(Session &session, const QString &path, bool system);
     bool writeFile(Session &session, const QString &path, const QByteArray &data, bool system);
     bool ensureInclude(Session &session, const QString &path, const QString &line);
     bool upsertLine(Session &session, const QString &path, const QString &prefix, const QString &line);
     bool setQtScheme(Session &session, const QString &path);
+    bool setIniValue(Session &session, const QString &path, const QString &section,
+                     const QString &key, const QString &value);
     void writeManifest(const Session &session) const;
     void setStatus(const QString &status);
 
@@ -74,6 +80,7 @@ private:
     void applyBtop(Session &session, const Theme &theme);
     void applyZellij(Session &session, const Theme &theme);
     void applyHyprland(Session &session, const Theme &theme);
+    void applyCursor(Session &session, const Theme &theme);
     void applySpicetify(Session &session, const Theme &theme);
     void applyVesktop(Session &session, const Theme &theme);
 

@@ -9,6 +9,8 @@ Switch {
     spacing: 8
     font.pixelSize: 11
 
+    HoverHandler { cursorShape: control.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
+
     readonly property var appTheme: Window.window && Window.window.uiColors ? Window.window.uiColors : null
 
     function themeColor(key, fallback) {

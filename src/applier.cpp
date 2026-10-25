@@ -1,5 +1,6 @@
 #include "applier.h"
 
+#include "cursortheme.h"
 #include "palette.h"
 #include "paths.h"
 #include "templaterenderer.h"
@@ -123,6 +124,12 @@ bool Applier::backupFile(Session &session, const QString &path, bool system)
 
 bool Applier::writeFile(Session &session, const QString &path, const QByteArray &data, bool system)
 {
+    if (session.dryRun) {
+        if (!session.applied.contains(path))
+            session.applied << path;
+        return true;
+    }
+
     if (!backupFile(session, path, system))
         return false;
 
@@ -204,6 +211,54 @@ bool Applier::upsertLine(Session &session, const QString &path, const QString &p
     }
     if (!replaced)
         lines.append(line);
+
+    return writeFile(session, path, (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8(), false);
+}
+
+bool Applier::setIniValue(Session &session, const QString &path, const QString &section,
+                          const QString &key, const QString &value)
+{
+    QString content;
+    const bool exists = QFileInfo::exists(path);
+    if (exists && !readFile(path, &content)) {
+        session.warnings << QStringLiteral("Could not read %1").arg(path);
+        return false;
+    }
+
+    QStringList lines = content.split(QLatin1Char('\n'));
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+
+    const QString header = QStringLiteral("[") + section + QLatin1Char(']');
+    int headerIndex = -1;
+    for (int i = 0; i < lines.size(); ++i) {
+        if (lines.at(i).trimmed().compare(header, Qt::CaseInsensitive) == 0) {
+            headerIndex = i;
+            break;
+        }
+    }
+    if (headerIndex < 0) {
+        if (!lines.isEmpty() && !lines.last().trimmed().isEmpty())
+            lines.append(QString());
+        lines.append(header);
+        headerIndex = lines.size() - 1;
+    }
+
+    const QString line = key + QLatin1Char('=') + value;
+    bool replaced = false;
+    for (int i = headerIndex + 1; i < lines.size(); ++i) {
+        const QString existing = lines.at(i).trimmed();
+        if (existing.startsWith(QLatin1Char('[')))
+            break;
+        const QString existingKey = existing.section(QLatin1Char('='), 0, 0).trimmed();
+        if (existingKey.compare(key, Qt::CaseInsensitive) == 0) {
+            lines[i] = line;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+        lines.insert(headerIndex + 1, line);
 
     return writeFile(session, path, (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8(), false);
 }
@@ -314,6 +369,15 @@ void Applier::applyWallpaper(Session &session, const Theme &theme)
         return;
     }
 
+    if (session.dryRun) {
+        if (!QStandardPaths::findExecutable(QStringLiteral("plasma-apply-wallpaperimage")).isEmpty()
+            || !QStandardPaths::findExecutable(QStringLiteral("swww")).isEmpty())
+            session.applied << theme.wallpaper;
+        else
+            session.warnings << QStringLiteral("No wallpaper backend found; set it manually: %1").arg(theme.wallpaper);
+        return;
+    }
+
     if (!QStandardPaths::findExecutable(QStringLiteral("plasma-apply-wallpaperimage")).isEmpty()) {
         if (run(QStringLiteral("plasma-apply-wallpaperimage"), {theme.wallpaper}, 15000))
             session.applied << QStringLiteral("Wallpaper");
@@ -337,6 +401,12 @@ void Applier::applyKdePackage(Session &session, const Theme &theme)
 {
     if (theme.packageId.isEmpty()) {
         session.warnings << QStringLiteral("The KDE package has no plugin id");
+        return;
+    }
+
+    if (session.dryRun) {
+        session.applied << QStringLiteral("KDE package: %1")
+                               .arg(theme.packageName.isEmpty() ? theme.packageId : theme.packageName);
         return;
     }
 
@@ -402,7 +472,8 @@ void Applier::applyKde(Session &session, const Theme &theme, bool systemWide)
         return;
 
     QString output;
-    if (!run(QStringLiteral("plasma-apply-colorscheme"), {QStringLiteral("HyperThemes")}, 10000, &output))
+    if (!session.dryRun
+        && !run(QStringLiteral("plasma-apply-colorscheme"), {QStringLiteral("HyperThemes")}, 10000, &output))
         session.warnings << QStringLiteral("KDE color scheme written, but plasma-apply-colorscheme did not accept it");
 }
 
@@ -602,11 +673,72 @@ void Applier::applyHyprland(Session &session, const Theme &theme)
                        QStringLiteral("source = %1").arg(includePath)))
         return;
 
-    if (hasHyprctl && !qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD")) {
+    if (!session.dryRun && hasHyprctl && !qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD")) {
         if (!run(QStringLiteral("hyprctl"), {QStringLiteral("reload")}, 8000))
             session.warnings << QStringLiteral("Hyprland colours were written, but hyprctl reload failed");
     }
     session.warnings << QStringLiteral("Hyprland keeps your window rules; only the generated border and shadow colours change");
+}
+
+void Applier::applyCursor(Session &session, const Theme &theme)
+{
+    const QHash<QString, QByteArray> files = CursorTheme::build(theme);
+    if (files.isEmpty()) {
+        session.warnings << QStringLiteral("The pointer theme could not be generated");
+        return;
+    }
+
+    const QString dir = CursorTheme::installDir();
+    for (auto it = files.cbegin(); it != files.cend(); ++it) {
+        if (!writeFile(session, dir + QLatin1Char('/') + it.key(), it.value(), false))
+            return;
+    }
+
+    if (!writeFile(session, CursorTheme::defaultThemePath(), CursorTheme::defaultThemeFile(), false))
+        return;
+
+    const QString name = CursorTheme::themeName();
+    for (const QString &folder : {QStringLiteral("gtk-3.0"), QStringLiteral("gtk-4.0")}) {
+        if (!setIniValue(session, Paths::configHome() + QLatin1Char('/') + folder
+                                        + QStringLiteral("/settings.ini"),
+                         QStringLiteral("Settings"), QStringLiteral("gtk-cursor-theme-name"), name))
+            return;
+    }
+    if (!setIniValue(session, Paths::configHome() + QStringLiteral("/kcminputrc"),
+                     QStringLiteral("Mouse"), QStringLiteral("cursorTheme"), name))
+        return;
+
+    const QString environment = Paths::configHome()
+        + QStringLiteral("/environment.d/90-hyperthemes-cursor.conf");
+    if (!writeFile(session, environment,
+                   QStringLiteral("XCURSOR_THEME=%1\n").arg(name).toUtf8(), false))
+        return;
+
+    if (!session.dryRun && !qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD")) {
+        // Each desktop has its own live switch; all of them are best effort.
+        run(QStringLiteral("plasma-apply-cursortheme"), {name}, 15000);
+        run(QStringLiteral("gsettings"),
+            {QStringLiteral("set"), QStringLiteral("org.gnome.desktop.interface"),
+             QStringLiteral("cursor-theme"), name},
+            10000);
+        run(QStringLiteral("hyprctl"), {QStringLiteral("setcursor"), name, QStringLiteral("24")}, 8000);
+        run(QStringLiteral("swaymsg"),
+            {QStringLiteral("seat"), QStringLiteral("*"), QStringLiteral("xcursor_theme"), name,
+             QStringLiteral("24")},
+            8000);
+        if (!run(QStringLiteral("xfconf-query"),
+                 {QStringLiteral("-c"), QStringLiteral("xsettings"), QStringLiteral("-p"),
+                  QStringLiteral("/Gtk/CursorThemeName"), QStringLiteral("-s"), name},
+                 10000)) {
+            run(QStringLiteral("xfconf-query"),
+                {QStringLiteral("-c"), QStringLiteral("xsettings"), QStringLiteral("-p"),
+                 QStringLiteral("/Gtk/CursorThemeName"), QStringLiteral("-n"), QStringLiteral("-t"),
+                 QStringLiteral("string"), QStringLiteral("-s"), name},
+                10000);
+        }
+    }
+
+    session.warnings << QStringLiteral("The HyperThemes pointer is selected; restart open apps (or sign out) to refresh their cursor");
 }
 
 void Applier::applySpicetify(Session &session, const Theme &theme)
@@ -622,23 +754,25 @@ void Applier::applySpicetify(Session &session, const Theme &theme)
     writeFile(session, dir + QStringLiteral("/user.css"),
               TemplateRenderer::render(QStringLiteral("spicetify-user.css"), theme).toUtf8(), false);
 
-    const QString config = Paths::configHome() + QStringLiteral("/spicetify/config-xpui.ini");
-    backupFile(session, config, false);
-    QString output;
-    if (!run(QStringLiteral("spicetify"),
-             {QStringLiteral("config"), QStringLiteral("current_theme"), QStringLiteral("HyperThemes"),
-              QStringLiteral("color_scheme"), QStringLiteral("hyperthemes"),
-              QStringLiteral("inject_css"), QStringLiteral("1"),
-              QStringLiteral("replace_colors"), QStringLiteral("1")},
-             30000, &output)) {
-        session.warnings << QStringLiteral("Spicetify config failed: %1").arg(output.trimmed());
-        return;
-    }
+    if (!session.dryRun) {
+        const QString config = Paths::configHome() + QStringLiteral("/spicetify/config-xpui.ini");
+        backupFile(session, config, false);
+        QString output;
+        if (!run(QStringLiteral("spicetify"),
+                 {QStringLiteral("config"), QStringLiteral("current_theme"), QStringLiteral("HyperThemes"),
+                  QStringLiteral("color_scheme"), QStringLiteral("hyperthemes"),
+                  QStringLiteral("inject_css"), QStringLiteral("1"),
+                  QStringLiteral("replace_colors"), QStringLiteral("1")},
+                 30000, &output)) {
+            session.warnings << QStringLiteral("Spicetify config failed: %1").arg(output.trimmed());
+            return;
+        }
 
-    if (run(QStringLiteral("pgrep"), {QStringLiteral("-x"), QStringLiteral("spotify")}, 3000)) {
-        session.warnings << QStringLiteral("Spotify is running; close it and run 'spicetify apply' to load the theme");
-    } else if (!run(QStringLiteral("spicetify"), {QStringLiteral("apply")}, 120000, &output)) {
-        session.warnings << QStringLiteral("Spicetify apply failed: %1").arg(output.trimmed());
+        if (run(QStringLiteral("pgrep"), {QStringLiteral("-x"), QStringLiteral("spotify")}, 3000)) {
+            session.warnings << QStringLiteral("Spotify is running; close it and run 'spicetify apply' to load the theme");
+        } else if (!run(QStringLiteral("spicetify"), {QStringLiteral("apply")}, 120000, &output)) {
+            session.warnings << QStringLiteral("Spicetify apply failed: %1").arg(output.trimmed());
+        }
     }
     session.warnings << QStringLiteral("Spicetify patches Spotify's client files; use 'spicetify restore' to undo that part");
 }
@@ -690,7 +824,8 @@ void Applier::applyVesktop(Session &session, const Theme &theme)
     QDir().mkpath(configBase + QStringLiteral("/settings"));
     writeFile(session, settingsPath, QJsonDocument(settings).toJson(QJsonDocument::Indented), false);
 
-    if (run(QStringLiteral("pgrep"), {QStringLiteral("-f"), QStringLiteral("vesktop")}, 3000)) {
+    if (!session.dryRun
+        && run(QStringLiteral("pgrep"), {QStringLiteral("-f"), QStringLiteral("vesktop")}, 3000)) {
         session.warnings << QStringLiteral("Vesktop is running; restart it to load hyperthemes.css");
     }
 }
@@ -725,6 +860,17 @@ QVariantMap Applier::setWallpaper(const QString &path)
 
 QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targets, bool systemWide)
 {
+    return applyInternal(themeMap, targets, systemWide, false);
+}
+
+QVariantMap Applier::dryRun(const QVariantMap &themeMap, const QStringList &targets, bool systemWide)
+{
+    return applyInternal(themeMap, targets, systemWide, true);
+}
+
+QVariantMap Applier::applyInternal(const QVariantMap &themeMap, const QStringList &targets,
+                                   bool systemWide, bool dryRun)
+{
     Theme theme = Theme::fromMap(themeMap);
     if (theme.id.isEmpty() || (theme.palette.isEmpty() && theme.packageId.isEmpty()))
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("No theme palette was supplied")}};
@@ -736,7 +882,8 @@ QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targe
     session.dir = sessionDir(session.id);
     session.themeId = theme.id;
     session.system = systemWide;
-    if (!QDir().mkpath(session.dir + QStringLiteral("/files")))
+    session.dryRun = dryRun;
+    if (!dryRun && !QDir().mkpath(session.dir + QStringLiteral("/files")))
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Could not create the backup directory")}};
 
     setStatus(QStringLiteral("Applying %1…").arg(theme.name));
@@ -748,7 +895,12 @@ QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targe
                        || requested.contains(QStringLiteral("hyprland")))) {
         session.warnings << QStringLiteral("System-wide mode only affects the KDE color scheme; other targets stay in your user config");
     }
+    QVariantList results;
     for (const QString &target : requested) {
+        const int warningsBefore = session.warnings.size();
+        const int appliedBefore = session.applied.size();
+        bool known = true;
+
         if (target == QLatin1String("wallpaper"))
             applyWallpaper(session, theme);
         else if (target == QLatin1String("kde"))
@@ -773,30 +925,66 @@ QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targe
             applyZellij(session, theme);
         else if (target == QLatin1String("hyprland"))
             applyHyprland(session, theme);
+        else if (target == QLatin1String("cursor"))
+            applyCursor(session, theme);
         else if (target == QLatin1String("spicetify"))
             applySpicetify(session, theme);
         else if (target == QLatin1String("vesktop"))
             applyVesktop(session, theme);
-        else
+        else {
+            known = false;
             session.warnings << QStringLiteral("Unknown target: %1").arg(target);
+        }
+
+        const QStringList addedWarnings = session.warnings.mid(warningsBefore);
+        const QStringList addedFiles = session.applied.mid(appliedBefore);
+        QString status = known ? QStringLiteral("ok") : QStringLiteral("unknown");
+        if (known && !addedWarnings.isEmpty()) {
+            status = QStringLiteral("warning");
+            for (const QString &warning : addedWarnings) {
+                if (warning.contains(QStringLiteral("skipping"))
+                    || warning.contains(QStringLiteral("not detected"))
+                    || warning.contains(QStringLiteral("not installed"))
+                    || warning.contains(QStringLiteral("was not found"))) {
+                    status = QStringLiteral("skipped");
+                    break;
+                }
+            }
+        } else if (known && addedFiles.isEmpty()) {
+            status = QStringLiteral("unchanged");
+        }
+
+        results.append(QVariantMap{
+            {QStringLiteral("target"), target},
+            {QStringLiteral("status"), status},
+            {QStringLiteral("warnings"), addedWarnings},
+            {QStringLiteral("files"), addedFiles},
+        });
     }
 
-    writeManifest(session);
-    m_lastBackup = session.id;
-    emit lastBackupChanged();
+    if (!dryRun) {
+        writeManifest(session);
+        m_lastBackup = session.id;
+        emit lastBackupChanged();
+    }
 
-    if (session.applied.isEmpty()) {
+    if (session.applied.isEmpty() && !dryRun) {
         setStatus(QStringLiteral("Nothing was applied"));
         return {{QStringLiteral("ok"), false},
                 {QStringLiteral("error"), QStringLiteral("No target could be applied")},
-                {QStringLiteral("warnings"), session.warnings}};
+                {QStringLiteral("warnings"), session.warnings},
+                {QStringLiteral("results"), results}};
     }
 
-    setStatus(QStringLiteral("Applied %1").arg(theme.name));
+    setStatus(dryRun ? QStringLiteral("Previewed %1").arg(theme.name)
+                     : QStringLiteral("Applied %1").arg(theme.name));
     return {{QStringLiteral("ok"), true},
-            {QStringLiteral("backup"), session.id},
+            {QStringLiteral("backup"), dryRun ? QString() : session.id},
             {QStringLiteral("applied"), session.applied},
+            {QStringLiteral("files"), session.applied},
             {QStringLiteral("warnings"), session.warnings},
+            {QStringLiteral("results"), results},
+            {QStringLiteral("dryRun"), dryRun},
             {QStringLiteral("system"), systemWide}};
 }
 

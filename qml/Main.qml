@@ -18,7 +18,7 @@ ApplicationWindow {
     color: colors.bg
     font.family: Qt.application.font.family
 
-    readonly property var allTargets: ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "btop", "zellij", "hyprland", "spicetify", "vesktop"]
+    readonly property var allTargets: ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "btop", "zellij", "hyprland", "cursor", "spicetify", "vesktop"]
     readonly property var extraTargets: ["btop", "zellij", "hyprland"]
 
     property var themes: []
@@ -48,6 +48,18 @@ ApplicationWindow {
     property string targetFilter: "All"
     property string sortMode: "Name"
     property bool followPalette: true
+    property bool favoritesOnly: false
+    property bool compactCards: false
+    property bool inspectorOpen: true
+    property int inspectorWidth: 352
+    property bool paletteOpen: false
+    property string paletteQuery: ""
+    property var paletteModel: []
+    property int paletteIndex: 0
+    property var compareTheme: null
+    property string compareSearch: ""
+    property var compareResults: []
+    property var applyResults: []
     readonly property color appAccent: colors.accent
     readonly property color appBackground: colors.bg
     readonly property color appText: colors.text
@@ -85,6 +97,11 @@ ApplicationWindow {
     property bool shellShowSeconds: false
     property bool shellBorders: true
     property bool shellShadow: true
+    property string shellStyle: "floating"
+    property int shellAnimationDuration: 120
+    property var shellMonitors: []
+    property var shellBottomMonitors: []
+    property var shellPresets: []
     property string shellFontFamily: ""
     property int shellFontSize: 12
     property int shellIconSize: 16
@@ -124,6 +141,142 @@ ApplicationWindow {
 
     function hasPalette(item) {
         return !!item && !!item.palette && Object.keys(item.palette).length > 0;
+    }
+
+    function idList(raw) {
+        try {
+            var list = JSON.parse(raw || "[]");
+            return list instanceof Array ? list : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function isFavorite(id) {
+        return id !== undefined && root.idList(prefs.favoriteIds).indexOf(id) >= 0;
+    }
+
+    function toggleFavorite(id) {
+        if (!id)
+            return;
+        var list = root.idList(prefs.favoriteIds).slice();
+        var index = list.indexOf(id);
+        if (index >= 0)
+            list.splice(index, 1);
+        else
+            list.unshift(id);
+        prefs.favoriteIds = JSON.stringify(list);
+        root.recompute();
+        root.notify(index >= 0 ? "Removed from favorites" : "Added to favorites");
+    }
+
+    function recordRecent(id) {
+        if (!id)
+            return;
+        var list = root.idList(prefs.recentIds).filter(function(value) { return value !== id; });
+        list.unshift(id);
+        prefs.recentIds = JSON.stringify(list.slice(0, 12));
+    }
+
+    function recentThemes() {
+        var list = root.idList(prefs.recentIds);
+        var out = [];
+        for (var i = 0; i < list.length; ++i) {
+            var theme = root.themeById(list[i]);
+            if (theme)
+                out.push(theme);
+        }
+        return out;
+    }
+
+    function refreshPalette() {
+        var query = root.paletteQuery.toLowerCase();
+        var entries = [
+            { kind: "page", label: "Explore themes", detail: "Go to Explore", payload: "explore" },
+            { kind: "page", label: "Categories", detail: "Go to Categories", payload: "categories" },
+            { kind: "page", label: "My themes", detail: "Go to My themes", payload: "mine" },
+            { kind: "page", label: "Layout presets", detail: "Go to Layouts", payload: "layouts" },
+            { kind: "page", label: "Quickshell builder", detail: "Go to Shell", payload: "shell" },
+            { kind: "page", label: "Dynamic palette", detail: "Go to Dynamic", payload: "dynamic" },
+            { kind: "page", label: "Settings", detail: "Go to Settings", payload: "settings" },
+            { kind: "action", label: "Apply the selected theme", detail: "Apply to the checked targets", payload: "apply" },
+            { kind: "action", label: root.favoritesOnly ? "Show all themes" : "Show favorites only", detail: "Toggle the favorites filter", payload: "favorites" },
+            { kind: "action", label: root.compactCards ? "Use roomy cards" : "Use compact cards", detail: "Toggle the card density", payload: "compact" },
+            { kind: "action", label: "Copy the shell command", detail: "qs -c <name>", payload: "copy" }
+        ];
+        if (query !== "") {
+            entries = entries.filter(function(entry) {
+                return (entry.label + " " + entry.detail).toLowerCase().indexOf(query) >= 0;
+            });
+        }
+
+        var themes = [];
+        for (var i = 0; i < root.filtered.length && themes.length < 8; ++i) {
+            var item = root.filtered[i];
+            if (query !== "" && (item.name + " " + (item.category || "")).toLowerCase().indexOf(query) < 0)
+                continue;
+            themes.push({ kind: "theme", label: item.name, detail: (item.category || "Theme") + " \u00b7 " + (item.mode || ""), payload: item });
+        }
+        entries = entries.concat(themes);
+        if (query === "") {
+            var recent = root.recentThemes();
+            for (var r = 0; r < recent.length && r < 4; ++r)
+                entries.push({ kind: "theme", label: recent[r].name, detail: "Recent \u00b7 " + (recent[r].category || "Theme"), payload: recent[r] });
+        }
+        root.paletteModel = entries;
+        root.paletteIndex = 0;
+    }
+
+    function openPalette() {
+        root.paletteOpen = true;
+        root.paletteQuery = "";
+        root.refreshPalette();
+    }
+
+    function runPaletteItem(item) {
+        if (!item)
+            return;
+        root.paletteOpen = false;
+        if (item.kind === "theme") {
+            root.selectTheme(item.payload);
+            root.page = "explore";
+        } else if (item.kind === "page") {
+            root.page = item.payload;
+        } else if (item.payload === "apply") {
+            root.applySelected();
+        } else if (item.payload === "favorites") {
+            root.favoritesOnly = !root.favoritesOnly;
+            root.recompute();
+        } else if (item.payload === "compact") {
+            root.compactCards = !root.compactCards;
+        } else if (item.payload === "copy") {
+            root.copyShellCommand();
+        }
+    }
+
+    function openCompare() {
+        root.compareSearch = "";
+        root.compareTheme = null;
+        for (var i = 0; i < root.filtered.length; ++i) {
+            if (!root.selected || root.filtered[i].id !== root.selected.id) {
+                root.compareTheme = root.filtered[i];
+                break;
+            }
+        }
+        root.refreshCompare();
+        compareDialog.open();
+    }
+
+    function refreshCompare() {
+        var query = root.compareSearch.toLowerCase();
+        var out = [];
+        for (var i = 0; i < root.themes.length && out.length < 40; ++i) {
+            var item = root.themes[i];
+            if (query !== "" && (item.name + " " + (item.category || "")).toLowerCase().indexOf(query) < 0)
+                continue;
+            out.push(item);
+        }
+        root.compareResults = out;
     }
 
     function paletteColor(key, fallback) {
@@ -204,6 +357,7 @@ ApplicationWindow {
             btop: "btop",
             zellij: "Zellij",
             hyprland: "Hyprland",
+            cursor: "Mouse pointer",
             spicetify: "Spotify / Spicetify",
             vesktop: "Discord / Vesktop",
             wallpaper: "Wallpaper"
@@ -367,6 +521,7 @@ ApplicationWindow {
         var list = [];
         var seen = {};
         var lower = search.toLowerCase();
+        var favorites = favoritesOnly ? root.idList(prefs.favoriteIds) : [];
         buildCollections(all);
         buildCategoryTiles(all);
 
@@ -388,6 +543,8 @@ ApplicationWindow {
             if (modeFilter !== "All" && item.mode !== modeFilter)
                 continue;
             if (!targetMatches(item, targetFilter))
+                continue;
+            if (favoritesOnly && favorites.indexOf(item.id) < 0)
                 continue;
             if (lower.length > 0) {
                 var haystack = ((item.name || "") + " " + (item.description || "") + " " + (item.author || "") + " " + (item.source || "") + " " + (item.category || "")).toLowerCase();
@@ -455,6 +612,7 @@ ApplicationWindow {
             prefs.lastThemeId = item.id;
         applyWarnings = [];
         applyError = "";
+        applyResults = [];
         remoteInstallError = "";
         var options = [];
         var enabled = {};
@@ -464,6 +622,10 @@ ApplicationWindow {
                 if (targets.indexOf(extraTargets[extra]) < 0)
                     targets.push(extraTargets[extra]);
             }
+            // The pointer matches whatever palette is applied, so it is offered
+            // for local, remote and wallpaper themes too, not just the catalog.
+            if (targets.indexOf("cursor") < 0)
+                targets.push("cursor");
         }
         for (var i = 0; i < targets.length; ++i) {
             var key = targets[i];
@@ -522,11 +684,14 @@ ApplicationWindow {
         busy = true;
         applyWarnings = [];
         applyError = "";
+        applyResults = [];
         var result = Applier.apply(selected, targets, systemWide);
         busy = false;
         applyWarnings = result.warnings || [];
+        applyResults = result.results || [];
         if (result.ok) {
             statusText = "Applied " + selected.name;
+            recordRecent(selected.id);
             notify("Applied " + selected.name + " · backup " + result.backup);
             refreshBackups();
         } else {
@@ -580,6 +745,10 @@ ApplicationWindow {
         shellShowSeconds = config.showSeconds !== undefined ? config.showSeconds : shellShowSeconds;
         shellBorders = config.borders !== undefined ? config.borders : shellBorders;
         shellShadow = config.shadow !== undefined ? config.shadow : shellShadow;
+        shellStyle = config.style !== undefined ? config.style : shellStyle;
+        shellAnimationDuration = config.animationDuration !== undefined ? config.animationDuration : shellAnimationDuration;
+        shellMonitors = config.monitors !== undefined ? config.monitors : shellMonitors;
+        shellBottomMonitors = config.bottomMonitors !== undefined ? config.bottomMonitors : shellBottomMonitors;
         shellFontFamily = config.fontFamily !== undefined ? config.fontFamily : shellFontFamily;
         shellFontSize = config.fontSize !== undefined ? config.fontSize : shellFontSize;
         shellIconSize = config.iconSize !== undefined ? config.iconSize : shellIconSize;
@@ -594,6 +763,82 @@ ApplicationWindow {
         shellBackups = ShellBuilder.backups();
         shellBackupEntries = ShellBuilder.backupEntries();
         shellConfigs = ShellBuilder.configs();
+        shellPresets = ShellBuilder.presets();
+    }
+
+    function applyShellStyle(style) {
+        shellStyle = style;
+        if (style === "edge") {
+            shellMargin = 0;
+            shellRadius = 0;
+            shellBorders = false;
+            shellShadow = false;
+            shellAnimationDuration = 90;
+        } else if (style === "pill") {
+            shellMargin = 8;
+            shellRadius = Math.round(shellBarHeight / 2);
+            shellBorders = true;
+            shellShadow = true;
+            shellAnimationDuration = 160;
+        } else if (style === "minimal") {
+            shellMargin = 4;
+            shellRadius = 0;
+            shellBorders = false;
+            shellShadow = false;
+            shellAnimationDuration = 0;
+        } else {
+            shellMargin = 6;
+            shellRadius = 10;
+            shellBorders = true;
+            shellShadow = true;
+            shellAnimationDuration = 120;
+        }
+    }
+
+    function setShellMonitors(text) {
+        shellMonitors = String(text).split(",").map(function(value) { return value.trim(); })
+            .filter(function(value) { return value.length > 0; });
+    }
+
+    function setShellBottomMonitors(text) {
+        shellBottomMonitors = String(text).split(",").map(function(value) { return value.trim(); })
+            .filter(function(value) { return value.length > 0; });
+    }
+
+    function shellSavePreset(name) {
+        var result = ShellBuilder.savePreset(name, shellConfig());
+        if (!result.ok) {
+            shellError = result.error || "The preset could not be saved.";
+            notify(shellError);
+            return;
+        }
+        refreshShellLists();
+        notify("Saved builder preset " + result.name);
+    }
+
+    function shellLoadPreset(name) {
+        var result = ShellBuilder.loadPreset(name);
+        if (!result.ok) {
+            shellError = result.error || "The preset could not be loaded.";
+            notify(shellError);
+            return;
+        }
+        applyShellConfig(result.config);
+        shellResult = "";
+        shellFiles = [];
+        shellLoadedTheme = result.config.themeName || "";
+        notify("Loaded builder preset " + name);
+    }
+
+    function shellDeletePreset(name) {
+        var result = ShellBuilder.deletePreset(name);
+        if (!result.ok) {
+            shellError = result.error || "The preset could not be deleted.";
+            notify(shellError);
+            return;
+        }
+        refreshShellLists();
+        notify("Deleted builder preset " + name);
     }
 
     function themeById(id) {
@@ -776,7 +1021,10 @@ ApplicationWindow {
             tray: "▦",
             battery: "82%",
             statusIcons: "◍",
-            power: "⏻"
+            power: "⏻",
+            separator: "│",
+            spacer: "",
+            systemLoad: "load 0.4"
         };
         return labels[id] || id;
     }
@@ -795,6 +1043,10 @@ ApplicationWindow {
             showSeconds: shellShowSeconds,
             borders: shellBorders,
             shadow: shellShadow,
+            style: shellStyle,
+            animationDuration: shellAnimationDuration,
+            monitors: shellMonitors,
+            bottomMonitors: shellBottomMonitors,
             fontFamily: shellFontFamily,
             fontSize: shellFontSize,
             iconSize: shellIconSize,
@@ -1516,8 +1768,13 @@ ApplicationWindow {
         property alias systemWide: root.systemWide
         property alias page: root.page
         property alias wallpaperPath: root.wallpaperPath
+        property alias compactCards: root.compactCards
+        property alias inspectorOpen: root.inspectorOpen
+        property alias inspectorWidth: root.inspectorWidth
         property string lastThemeId: ""
         property string targetSelections: "{}"
+        property string favoriteIds: "[]"
+        property string recentIds: "[]"
     }
 
     palette.window: colors.bg
@@ -1548,6 +1805,10 @@ ApplicationWindow {
     onShellShowSecondsChanged: shellSaveTimer.restart()
     onShellBordersChanged: shellSaveTimer.restart()
     onShellShadowChanged: shellSaveTimer.restart()
+    onShellStyleChanged: shellSaveTimer.restart()
+    onShellAnimationDurationChanged: shellSaveTimer.restart()
+    onShellMonitorsChanged: shellSaveTimer.restart()
+    onShellBottomMonitorsChanged: shellSaveTimer.restart()
     onShellFontFamilyChanged: shellSaveTimer.restart()
     onShellFontSizeChanged: shellSaveTimer.restart()
     onShellIconSizeChanged: shellSaveTimer.restart()
@@ -1895,6 +2156,16 @@ ApplicationWindow {
                         primary: true
                         onClicked: importDialog.open()
                     }
+
+                    ActionButton {
+                        text: root.compactCards ? "Roomy cards" : "Compact cards"
+                        onClicked: root.compactCards = !root.compactCards
+                    }
+
+                    ActionButton {
+                        text: root.inspectorOpen ? "Hide inspector" : "Show inspector"
+                        onClicked: root.inspectorOpen = !root.inspectorOpen
+                    }
                 }
 
                 RowLayout {
@@ -2004,6 +2275,31 @@ ApplicationWindow {
                     spacing: 6
                     visible: root.page === "explore" || root.page === "mine"
 
+                    Rectangle {
+                        implicitWidth: favoriteChipText.implicitWidth + 22
+                        implicitHeight: 27
+                        radius: 14
+                        color: root.favoritesOnly ? colors.accent : colors.panel
+                        border.width: 1
+                        border.color: root.favoritesOnly ? colors.accent : colors.border
+
+                        Text {
+                            id: favoriteChipText
+                            anchors.centerIn: parent
+                            text: "★ Favorites"
+                            color: root.favoritesOnly ? colors.onAccent : colors.muted
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                        }
+
+                        TapHandler {
+                            onTapped: {
+                                root.favoritesOnly = !root.favoritesOnly;
+                                root.recompute();
+                            }
+                        }
+                    }
+
                     Repeater {
                         model: root.targetFilterModel
 
@@ -2020,7 +2316,7 @@ ApplicationWindow {
                             Accessible.role: Accessible.Button
                             Accessible.name: modelData.label + " themes"
 
-                            HoverHandler { id: filterHover }
+                            HoverHandler { id: filterHover; cursorShape: Qt.PointingHandCursor }
                             ToolTip.visible: filterHover.hovered
                             ToolTip.text: modelData.value === "All"
                                 ? "Every target"
@@ -2048,7 +2344,7 @@ ApplicationWindow {
                     Item { Layout.fillWidth: true }
 
                     ActionButton {
-                        visible: root.search !== "" || root.sourceFilter !== "All" || root.categoryFilter !== "All" || root.modeFilter !== "All" || root.targetFilter !== "All"
+                        visible: root.search !== "" || root.sourceFilter !== "All" || root.categoryFilter !== "All" || root.modeFilter !== "All" || root.targetFilter !== "All" || root.favoritesOnly
                         text: "Clear filters"
                         onClicked: {
                             root.search = "";
@@ -2056,10 +2352,53 @@ ApplicationWindow {
                             root.categoryFilter = "All";
                             root.modeFilter = "All";
                             root.targetFilter = "All";
+                            root.favoritesOnly = false;
                             searchField.text = "";
                             root.recompute();
                         }
                     }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    visible: (root.page === "explore" || root.page === "mine") && root.recentThemes().length > 0
+
+                    Text {
+                        text: "RECENT"
+                        color: colors.faint
+                        font.pixelSize: 9
+                        font.letterSpacing: 1.0
+                        font.weight: Font.DemiBold
+                    }
+
+                    Repeater {
+                        model: root.recentThemes()
+
+                        Rectangle {
+                            required property var modelData
+                            implicitWidth: recentLabel.implicitWidth + 18
+                            implicitHeight: 24
+                            radius: 12
+                            color: recentHover.hovered ? colors.elevated : colors.panel
+                            border.width: 1
+                            border.color: colors.border
+
+                            Text {
+                                id: recentLabel
+                                anchors.centerIn: parent
+                                text: modelData.name
+                                color: colors.muted
+                                font.pixelSize: 10
+                                elide: Text.ElideRight
+                            }
+
+                            HoverHandler { id: recentHover; cursorShape: Qt.PointingHandCursor }
+                            TapHandler { onTapped: root.selectTheme(modelData) }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
                 }
 
                 Item {
@@ -2074,9 +2413,9 @@ ApplicationWindow {
                             objectName: "themeGrid"
                             anchors.fill: parent
                             clip: true
-                            readonly property int columns: Math.max(1, Math.round(width / 300))
+                            readonly property int columns: Math.max(1, Math.round(width / (root.compactCards ? 252 : 300)))
                             cellWidth: Math.floor((width - 8) / columns)
-                            cellHeight: 264
+                            cellHeight: root.compactCards ? 218 : 264
                             leftMargin: 2
                             topMargin: 2
                             rightMargin: 2
@@ -2101,11 +2440,14 @@ ApplicationWindow {
                                 required property int index
 
                                 width: grid.cellWidth - 12
-                                height: 248
+                                height: root.compactCards ? 202 : 248
                                 item: modelData
                                 selected: root.selected && root.selected.id === modelData.id
                                 current: grid.activeFocus && grid.currentIndex === index
+                                favorite: root.isFavorite(modelData.id)
+                                compact: root.compactCards
                                 onActivated: root.selectTheme(modelData)
+                                onFavoriteToggled: root.toggleFavorite(modelData.id)
                             }
                         }
 
@@ -2971,7 +3313,37 @@ ApplicationWindow {
         }
 
         Rectangle {
-            Layout.preferredWidth: 352
+            Layout.preferredWidth: root.inspectorOpen ? 6 : 0
+            Layout.fillHeight: true
+            color: resizeHover.hovered || resizeArea.pressed ? colors.border : "transparent"
+
+            HoverHandler {
+                id: resizeHover
+                cursorShape: Qt.SizeHorCursor
+            }
+
+            MouseArea {
+                id: resizeArea
+                anchors.fill: parent
+                cursorShape: Qt.SizeHorCursor
+                property real startGlobal: 0
+                property int startWidth: 0
+                onPressed: {
+                    startGlobal = mapToItem(null, mouse.x, mouse.y).x;
+                    startWidth = root.inspectorWidth;
+                }
+                onPositionChanged: {
+                    if (!pressed)
+                        return;
+                    var delta = mapToItem(null, mouse.x, mouse.y).x - startGlobal;
+                    root.inspectorWidth = Math.max(280, Math.min(520, startWidth - delta));
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.inspectorOpen
+            Layout.preferredWidth: root.inspectorWidth
             Layout.fillHeight: true
             color: colors.panel
             border.width: 0
@@ -2983,7 +3355,7 @@ ApplicationWindow {
                 ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
                 ColumnLayout {
-                    width: 304
+                    width: Math.max(240, root.inspectorWidth - 48)
                     spacing: 12
 
                     Text {
@@ -3075,6 +3447,23 @@ ApplicationWindow {
                                 color: colors.faint
                                 font.pixelSize: 10
                                 elide: Text.ElideRight
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            ActionButton {
+                                Layout.fillWidth: true
+                                text: root.selected && root.isFavorite(root.selected.id) ? "★ Favorited" : "☆ Favorite"
+                                onClicked: if (root.selected) root.toggleFavorite(root.selected.id)
+                            }
+
+                            ActionButton {
+                                Layout.fillWidth: true
+                                text: "Compare…"
+                                onClicked: root.openCompare()
                             }
                         }
 
@@ -3231,6 +3620,62 @@ ApplicationWindow {
                         }
                         }
 
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: root.applyResults.length > 0
+                            spacing: 3
+
+                            Text {
+                                text: "LAST APPLY"
+                                color: colors.muted
+                                font.pixelSize: 9
+                                font.letterSpacing: 0.5
+                                font.weight: Font.DemiBold
+                            }
+
+                            Repeater {
+                                model: root.applyResults
+
+                                ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: 1
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 6
+                                            Layout.preferredHeight: 6
+                                            radius: 3
+                                            color: modelData.status === "ok" ? colors.success
+                                                 : modelData.status === "skipped" ? colors.faint
+                                                 : modelData.status === "unchanged" ? colors.muted
+                                                 : colors.danger
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData.target + "  ·  " + modelData.status
+                                            color: colors.muted
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: (modelData.warnings || []).length > 0
+                                        text: (modelData.warnings || []).join("; ")
+                                        color: colors.faint
+                                        font.pixelSize: 9
+                                        wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+                        }
+
                         Text {
                             Layout.fillWidth: true
                             visible: RemoteInstaller.busy
@@ -3359,6 +3804,292 @@ ApplicationWindow {
                 text: "Applying changes…"
                 color: colors.text
                 font.pixelSize: 12
+            }
+        }
+    }
+
+    Shortcut {
+        sequences: ["Ctrl+K"]
+        context: Qt.ApplicationShortcut
+        onActivated: root.openPalette()
+    }
+
+    Popup {
+        id: commandPalette
+        objectName: "commandPalette"
+        parent: Overlay.overlay
+        width: Math.min(620, parent ? parent.width - 80 : 620)
+        height: 430
+        x: parent ? Math.round((parent.width - width) / 2) : 0
+        y: parent ? Math.round((parent.height - height) / 3) : 0
+        modal: true
+        visible: root.paletteOpen
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onClosed: root.paletteOpen = false
+        onOpened: paletteField.forceActiveFocus()
+        background: Rectangle {
+            radius: 14
+            color: colors.panel
+            border.width: 1
+            border.color: colors.border
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            TextField {
+                id: paletteField
+                Layout.fillWidth: true
+                Layout.margins: 12
+                Layout.bottomMargin: 0
+                placeholderText: "Jump to a page, theme, or action…"
+                text: root.paletteQuery
+                color: colors.text
+                placeholderTextColor: colors.faint
+                font.pixelSize: 13
+                selectByMouse: true
+                onTextChanged: {
+                    root.paletteQuery = text;
+                    root.refreshPalette();
+                }
+                Keys.onDownPressed: {
+                    root.paletteIndex = Math.min(root.paletteIndex + 1, root.paletteModel.length - 1);
+                    paletteList.positionViewAtIndex(root.paletteIndex, ListView.Contain);
+                }
+                Keys.onUpPressed: {
+                    root.paletteIndex = Math.max(0, root.paletteIndex - 1);
+                    paletteList.positionViewAtIndex(root.paletteIndex, ListView.Contain);
+                }
+                Keys.onReturnPressed: root.runPaletteItem(root.paletteModel[root.paletteIndex])
+                Keys.onEnterPressed: root.runPaletteItem(root.paletteModel[root.paletteIndex])
+                Keys.onEscapePressed: root.paletteOpen = false
+                background: Rectangle {
+                    radius: 8
+                    color: colors.panel2
+                    border.width: 1
+                    border.color: paletteField.activeFocus ? colors.accent : colors.border
+                }
+            }
+
+            ListView {
+                id: paletteList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.margins: 12
+                Layout.topMargin: 0
+                clip: true
+                spacing: 2
+                model: root.paletteModel
+                currentIndex: root.paletteIndex
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+                delegate: Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: paletteList.width
+                    height: 44
+                    radius: 8
+                    color: index === root.paletteIndex ? colors.elevated : "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 10
+                        spacing: 8
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData.label
+                            color: index === root.paletteIndex ? colors.text : colors.muted
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            text: modelData.detail
+                            color: colors.faint
+                            font.pixelSize: 10
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    HoverHandler {
+                        onHoveredChanged: if (hovered) root.paletteIndex = index
+                    }
+
+                    TapHandler {
+                        onTapped: {
+                            root.paletteIndex = index;
+                            root.runPaletteItem(modelData);
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                Layout.margins: 12
+                Layout.topMargin: 0
+                text: "↑↓ to move   ·   Enter to open   ·   Esc to close"
+                color: colors.faint
+                font.pixelSize: 9
+            }
+        }
+    }
+
+    Dialog {
+        id: compareDialog
+        objectName: "compareDialog"
+        title: "Compare themes"
+        modal: true
+        anchors.centerIn: parent
+        width: 760
+        height: 560
+        standardButtons: Dialog.Close
+
+        contentItem: ColumnLayout {
+            spacing: 10
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 12
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.selected ? root.selected.name : "Nothing selected"
+                        color: colors.text
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Current selection"
+                        color: colors.faint
+                        font.pixelSize: 9
+                    }
+                }
+
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.compareTheme ? root.compareTheme.name : "Pick a theme below"
+                        color: colors.text
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+                    TextField {
+                        Layout.fillWidth: true
+                        placeholderText: "Search a theme to compare…"
+                        color: colors.text
+                        placeholderTextColor: colors.faint
+                        font.pixelSize: 11
+                        selectByMouse: true
+                        onTextChanged: {
+                            root.compareSearch = text;
+                            root.refreshCompare();
+                        }
+                        background: Rectangle {
+                            radius: 6
+                            color: colors.panel2
+                            border.width: 1
+                            border.color: colors.border
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Repeater {
+                    model: ["background", "surface", "surfaceContainerHigh", "primary", "secondary", "tertiary", "error"]
+
+                    ColumnLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            radius: 6
+                            color: root.colorFrom(root.selected, modelData, "#333039")
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 38
+                            radius: 6
+                            color: root.colorFrom(root.compareTheme, modelData, "#333039")
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData
+                            color: colors.faint
+                            font.pixelSize: 8
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: root.compareTheme
+                    ? "Text contrast: " + root.contrastLabel(root.contrast(root.colorFrom(root.compareTheme, "onSurface", "#ffffff"), root.colorFrom(root.compareTheme, "background", "#000000")))
+                      + "   ·   Targets: " + (root.compareTheme.targets || []).length
+                    : "Search, then pick a second theme to compare its palette, contrast and targets."
+                color: colors.muted
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+            }
+
+            ListView {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: root.compareResults
+                spacing: 2
+
+                delegate: Rectangle {
+                    required property var modelData
+                    width: ListView.view ? ListView.view.width : 0
+                    height: 38
+                    radius: 6
+                    color: root.compareTheme && root.compareTheme.id === modelData.id
+                        ? colors.elevated
+                        : compareHover.hovered ? colors.panel2 : "transparent"
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        spacing: 8
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData.name
+                            color: colors.text
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            text: (modelData.category || "Theme") + "  ·  " + (modelData.targets || []).length + " targets"
+                            color: colors.faint
+                            font.pixelSize: 9
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    HoverHandler { id: compareHover }
+                    TapHandler { onTapped: root.compareTheme = modelData }
+                }
             }
         }
     }

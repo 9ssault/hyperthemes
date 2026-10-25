@@ -2,6 +2,7 @@
 
 #include "applier.h"
 #include "catalog.h"
+#include "shellbuilder.h"
 
 #include <QCoreApplication>
 #include <QPair>
@@ -24,6 +25,7 @@ const QVector<QPair<QString, QString>> &knownTargets()
         {QStringLiteral("btop"), QStringLiteral("btop")},
         {QStringLiteral("zellij"), QStringLiteral("Zellij")},
         {QStringLiteral("hyprland"), QStringLiteral("Hyprland")},
+        {QStringLiteral("cursor"), QStringLiteral("Mouse pointer / Xcursor theme")},
         {QStringLiteral("spicetify"), QStringLiteral("Spotify / Spicetify")},
         {QStringLiteral("vesktop"), QStringLiteral("Discord / Vesktop")},
     };
@@ -44,7 +46,9 @@ struct Options {
     QString filter;
     bool listThemes = false;
     bool listTargets = false;
+    bool listConfigs = false;
     bool system = false;
+    bool dryRun = false;
     bool help = false;
 };
 
@@ -66,14 +70,17 @@ QString Cli::helpText()
         "  hyperthemes --apply <theme> --targets gtk,kitty  Apply several targets\n"
         "  hyperthemes --list-themes [filter]               List catalog themes\n"
         "  hyperthemes --list-targets                       List target names\n"
+        "  hyperthemes --list-configs                       List generated shell configs\n"
         "\n"
         "Options:\n"
         "  --apply <theme>     Catalog id or exact theme name\n"
         "  --target <name>     Target to apply; repeat for several\n"
         "  --targets <a,b>     Comma-separated targets\n"
+        "  --dry-run           Show the files an apply would change\n"
         "  --system            Write the KDE scheme system-wide (pkexec)\n"
         "  --list-themes [q]   Print matching ids, names and categories\n"
         "  --list-targets      Print supported targets\n"
+        "  --list-configs      Print generated Quickshell configs\n"
         "  -h, --help          Show this text\n"
         "\n"
         "A CLI apply requires at least one target, so it never writes more files\n"
@@ -85,7 +92,8 @@ bool Cli::requested(const QStringList &arguments)
 {
     static const QSet<QString> options = {
         QStringLiteral("--apply"), QStringLiteral("--target"), QStringLiteral("--targets"),
-        QStringLiteral("--system"), QStringLiteral("--list-themes"), QStringLiteral("--list-targets"),
+        QStringLiteral("--system"), QStringLiteral("--dry-run"), QStringLiteral("--list-themes"),
+        QStringLiteral("--list-targets"), QStringLiteral("--list-configs"),
         QStringLiteral("--help"), QStringLiteral("-h"),
     };
 
@@ -161,6 +169,14 @@ Cli::Result Cli::run(const QStringList &arguments)
             if (hasInline)
                 return fail(QStringLiteral("--system does not take a value."));
             options.system = true;
+        } else if (argument == QLatin1String("--list-configs")) {
+            if (hasInline)
+                return fail(QStringLiteral("--list-configs does not take a value."));
+            options.listConfigs = true;
+        } else if (argument == QLatin1String("--dry-run")) {
+            if (hasInline)
+                return fail(QStringLiteral("--dry-run does not take a value."));
+            options.dryRun = true;
         } else if (argument == QLatin1String("--list-targets")) {
             if (hasInline)
                 return fail(QStringLiteral("--list-targets does not take a value."));
@@ -191,13 +207,32 @@ Cli::Result Cli::run(const QStringList &arguments)
         ++actions;
     if (options.listTargets)
         ++actions;
+    if (options.listConfigs)
+        ++actions;
     if (actions > 1)
-        return fail(QStringLiteral("Choose one of --apply, --list-themes or --list-targets."));
+        return fail(QStringLiteral("Choose one of --apply, --list-themes, --list-targets or --list-configs."));
 
     if (options.listTargets) {
         QStringList lines;
         for (const auto &entry : knownTargets())
             lines << entry.first + QLatin1Char('\t') + entry.second;
+        result.output = lines.join(QLatin1Char('\n'));
+        return result;
+    }
+
+    if (options.listConfigs) {
+        ShellBuilder builder;
+        QStringList lines;
+        for (const QVariant &entry : builder.configs()) {
+            const QVariantMap config = entry.toMap();
+            lines << QStringLiteral("%1\t%2\t%3\t%4")
+                         .arg(config.value(QStringLiteral("name")).toString(),
+                              config.value(QStringLiteral("running")).toBool()
+                                  ? QStringLiteral("running")
+                                  : QStringLiteral("stopped"),
+                              config.value(QStringLiteral("modified")).toString(),
+                              config.value(QStringLiteral("theme")).toString());
+        }
         result.output = lines.join(QLatin1Char('\n'));
         return result;
     }
@@ -265,7 +300,9 @@ Cli::Result Cli::run(const QStringList &arguments)
     }
 
     Applier applier;
-    const QVariantMap applied = applier.apply(chosenTheme, targets, options.system);
+    const QVariantMap applied = options.dryRun
+        ? applier.dryRun(chosenTheme, targets, options.system)
+        : applier.apply(chosenTheme, targets, options.system);
     if (!applied.value(QStringLiteral("ok")).toBool()) {
         result.exitCode = 1;
         result.error = applied.value(QStringLiteral("error")).toString();
@@ -273,8 +310,30 @@ Cli::Result Cli::run(const QStringList &arguments)
     }
 
     QStringList lines;
-    lines << QStringLiteral("Applied %1 to %2")
-                 .arg(chosenTheme.value(QStringLiteral("name")).toString(), targets.join(QStringLiteral(", ")));
+    lines << QStringLiteral("%1 %2 to %3")
+                 .arg(options.dryRun ? QStringLiteral("Would apply") : QStringLiteral("Applied"),
+                      chosenTheme.value(QStringLiteral("name")).toString(),
+                      targets.join(QStringLiteral(", ")));
+
+    const QVariantList results = applied.value(QStringLiteral("results")).toList();
+    for (const QVariant &entry : results) {
+        const QVariantMap target = entry.toMap();
+        lines << QStringLiteral("  %1: %2")
+                     .arg(target.value(QStringLiteral("target")).toString(),
+                          target.value(QStringLiteral("status")).toString());
+    }
+
+    const QStringList files = applied.value(QStringLiteral("files")).toStringList();
+    if (options.dryRun) {
+        if (files.isEmpty()) {
+            lines << QStringLiteral("No files would change.");
+        } else {
+            lines << QStringLiteral("Would write:");
+            for (const QString &file : files)
+                lines << QStringLiteral("  %1").arg(file);
+        }
+    }
+
     const QString backup = applied.value(QStringLiteral("backup")).toString();
     if (!backup.isEmpty())
         lines << QStringLiteral("Backup: %1").arg(backup);

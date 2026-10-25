@@ -36,6 +36,10 @@ public:
     Q_INVOKABLE QVariantMap settings() const;
     Q_INVOKABLE void saveSettings(const QVariantMap &settings);
     Q_INVOKABLE void resetSettings();
+    Q_INVOKABLE QVariantMap savePreset(const QString &name, const QVariantMap &config);
+    Q_INVOKABLE QVariantList presets() const;
+    Q_INVOKABLE QVariantMap loadPreset(const QString &name);
+    Q_INVOKABLE QVariantMap deletePreset(const QString &name);
     Q_INVOKABLE bool quickshellAvailable() const;
     Q_INVOKABLE QString configDir(const QString &name) const;
     Q_INVOKABLE QString backupsPath() const;

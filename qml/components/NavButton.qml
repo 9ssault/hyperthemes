@@ -77,6 +77,7 @@ Item {
 
     HoverHandler {
         id: hover
+        cursorShape: Qt.PointingHandCursor
     }
 
     TapHandler {

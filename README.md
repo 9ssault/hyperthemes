@@ -10,14 +10,20 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 
 - **Catalog** — 1,655 bundled themes in 61 categories: Caelestia flavours, the tinted-theming Base16 and Base24 collections, Gogh and iTerm2 terminal schemes. Local imports, KDE Store, GitHub and GitLab sit in the same searchable gallery.
 - **Categories** — a dedicated shelf that groups the catalog into collections (Caelestia, Base16, Base24, Gogh, iTerm2) and theme families (Catppuccin, Gruvbox, Tokyo Night, Nord, Dracula and 47 more), with palette strips and counts.
-- **Picker** — live palette previews, readability badges, target filters (KDE, Quickshell, Waybar, GTK, terminals, apps), and keyboard selection.
+- **Picker** — live palette previews, readability badges, target filters (KDE, Quickshell, Waybar, GTK, terminals, apps), favorites, recent applies, and keyboard selection.
+- **Command palette** — **Ctrl+K** jumps to any page or theme, applies the current selection, toggles density, or copies the shell command.
+- **Compare** — put two themes side by side to compare their palettes, contrast and target coverage before applying.
+- **Apply results** — the inspector lists every requested target with `ok`, `warning`, `skipped`, `unchanged` or `unknown`, plus that target's warnings.
+- **Density and layout** — switch between roomy and compact cards, collapse the inspector, or drag its edge to resize it. Interactive controls use a hand cursor; the inspector splitter uses the horizontal resize cursor.
 - **Remote installs** — download a KDE Store or GitHub archive, validate and extract it, discover its color scheme or Plasma package, and turn it into an applyable theme.
 - **Self-theming** — the app restyles its own surfaces, text, accents and controls from the selected palette. Toggle it in Settings if you prefer the default shell.
 - **Palette previews** — every installed entry exposes its real values; remote cards say "no palette yet" instead of inventing colours from a name.
 - **Dynamic wallpapers** — pick any image, let `matugen` derive a complete palette, apply that palette, or set the custom wallpaper on its own. The chosen image is remembered between launches.
-- **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, btop, Zellij, Hyprland, Spicetify and Vesktop.
+- **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, btop, Zellij, Hyprland, mouse pointer, Spicetify and Vesktop.
+- **Mouse pointer** — build an Xcursor theme from the palette (arrow, hand, text, resize, watch, zoom and more) and select it for Xcursor, GTK, Plasma, GNOME and `environment.d`, so the pointer you use everywhere matches the theme. The theme is rewritten in place, and a rollback restores the previous cursor settings.
 - **Layout presets** — three Caelestia bar layouts and three KDE Plasma panel layouts, applied with a backup and a restore path.
-- **Quickshell builder** — compose a standalone Quickshell config (bar zones, 13 entries, typography, launcher, dashboard, radius, opacity, per-monitor bars) from the selected palette, write it to `~/.config/quickshell/<name>/`, validate it with `qmllint`, run and stop it, export it, copy its run command, or load an earlier generated config back into the builder.
+- **Quickshell builder** — compose a standalone Quickshell config (bar zones, 16 entries, typography, launcher, dashboard, radius, opacity, per-monitor bars) from the selected palette, write it to `~/.config/quickshell/<name>/`, validate it with `qmllint`, run and stop it, export it, copy its run command, or load an earlier generated config back into the builder.
+- **Builder styles and presets** — Floating, Edge, Pill and Minimal bar styles, an animation-speed control, per-monitor bar positions, and named presets that keep the whole layout for reuse with another palette.
 - **Config management** — generated folders can be duplicated, renamed and deleted from the Shell page. The list marks the config that is currently running and when each folder was last written.
 - **Command line** — `--apply` a theme to exactly the targets you name, plus `--list-themes` and `--list-targets` for scripting and discovery, without opening a window.
 - **User or system-wide** — KDE color schemes can be written to `~/.local/share/color-schemes` or `/usr/share/color-schemes` through `pkexec`.
@@ -61,9 +67,12 @@ hyperthemes --list-themes catppuccin
 hyperthemes --apply base16-dracula --target gtk
 hyperthemes --apply Dracula --targets gtk,kitty,foot
 hyperthemes --apply base16-dracula --target kde --system
+hyperthemes --apply base16-dracula --target gtk --dry-run
+hyperthemes --apply base16-dracula --target cursor
+hyperthemes --list-configs
 ```
 
-`--apply` needs at least one `--target` or `--targets` value, so a CLI run never touches more files than the command names. The theme can be a catalog id or an exact name; `--list-themes` accepts an optional case-insensitive filter and prints `id`, `name` and `category` as tab-separated columns. Backups, rollback manifests and skipped-tool warnings are the same as in the window. Exit codes are `0` for success, `1` for a failed apply or unknown theme, and `2` for a usage error.
+`--apply` needs at least one `--target` or `--targets` value, so a CLI run never touches more files than the command names. The theme can be a catalog id or an exact name; `--list-themes` accepts an optional case-insensitive filter and prints `id`, `name` and `category` as tab-separated columns. `--dry-run` prints each target's status and the files that would change without writing or backing anything up. `--list-configs` prints generated Quickshell folders as `name`, `running|stopped`, modification time and theme. Backups, rollback manifests and skipped-tool warnings are the same as in the window. Exit codes are `0` for success, `1` for a failed apply or unknown theme, and `2` for a usage error.
 
 ## Optional tools
 
@@ -77,7 +86,11 @@ hyperthemes --apply base16-dracula --target kde --system
 | `kpackagetool6` | Installing downloaded Plasma look-and-feel, style and color-scheme packages |
 | `plasma-apply-lookandfeel` | Switching to an installed global theme |
 | `caelestia` | Reloading Caelestia after a layout preset |
-| `hyprctl` | Reloading Hyprland after applying its colours |
+| `hyprctl` | Reloading Hyprland after applying its colours, and switching its pointer |
+| `plasma-apply-cursortheme` | Switching the pointer theme in a running Plasma session |
+| `gsettings` | Switching the pointer theme in a running GNOME session |
+| `swaymsg` | Switching the pointer theme in a running Sway session |
+| `xfconf-query` | Switching the pointer theme in a running Xfce session |
 | `btop` / `zellij` | Detecting those targets; their config directories also count |
 | `qs` / `quickshell` | Running a generated shell from the Shell page |
 | `qmllint` | Validating the generated Quickshell config (needs Quickshell's QML module) |
@@ -119,10 +132,12 @@ A downloaded `.colors` file is applied through the KDE color scheme target. A pa
 
 The **Shell** page composes a self-contained [Quickshell](https://quickshell.org) config from the selected palette:
 
-- bar position, height, outer margin, entry gap, corner radius, opacity, border and drop shadow;
-- one bar on the first monitor or one per monitor;
-- entries per zone (left, centre, right) chosen from logo, workspaces, launcher, clock, date, media, volume, network, Bluetooth, system tray, battery, status icons and power;
+- Floating, Edge, Pill and Minimal styles, plus separate height, margin, gap, radius, opacity, border, shadow and animation-speed controls;
+- one bar on the first monitor, one per monitor, or only on named monitors, with per-monitor top/bottom placement;
+- entries per zone (left, centre, right) chosen from logo, workspaces, launcher, clock, date, media, volume, network, Bluetooth, system tray, battery, status icons, power, separator, spacer and a live system-load readout;
 - clock format (12/24-hour and optional seconds), font family, font size, icon size and workspace count;
+- named builder presets that keep geometry, style, typography, monitors and entries for another palette;
+- live clock/date and a searchable launcher mock in the preview;
 - real Hyprland or Sway/i3 workspace entries, or decorative placeholder dots;
 - optional application launcher and dashboard with media controls, battery, lock, log-out, sleep, reboot and power actions.
 
@@ -138,7 +153,7 @@ hyperthemes.json          the builder inputs, used by Load and Configs
 README.md                 run, IPC and editing notes
 ```
 
-Run it with `qs -c <name>`. The preview shows the bar with the real palette, then mock launcher and dashboard panels so the layout can be checked before writing. **Validate** runs `qmllint` over the generated tree, **Run** starts the config as a child of HyperThemes (and **Stop** ends it), **Export** writes a `.tar.gz`, **Copy command** puts `qs -c <name>` on the clipboard, and **Generated configs** can load any previous HyperThemes config back into the builder. Each generated folder can also be duplicated, renamed or deleted from that list; the running config is marked, and it must be stopped before it can be renamed or deleted. Deletion copies the folder to Backups first, and the Backups card has a shortcut to open that folder.
+Run it with `qs -c <name>`. The preview shows the bar with the real palette, a ticking clock, and mock launcher and dashboard panels so the layout can be checked before writing. **Validate** runs `qmllint` over the generated tree, **Run** starts the config as a child of HyperThemes (and **Stop** ends it), **Export** writes a `.tar.gz`, **Copy command** puts `qs -c <name>` on the clipboard, and **Generated configs** can load any previous HyperThemes config back into the builder. Each generated folder can also be duplicated, renamed or deleted from that list; the running config is marked, and it must be stopped before it can be renamed or deleted. Deletion copies the folder to Backups first, and the Backups card has a shortcut to open that folder. **Builder presets** store the current style and layout under `~/.local/state/hyperthemes/shell-presets/` for reuse.
 
 Every write, and every delete, copies the folder to `~/.local/state/hyperthemes/shell-backups/<timestamp>-<name>/`; the Backups card restores any of them, not just the last and can open the backup folder in the file manager. Each generated folder contains a `hyperthemes.json` manifest, and restores are refused unless the backup points at a direct child of the Quickshell config folder. The launcher and dashboard expose IPC targets:
 
@@ -245,8 +260,9 @@ Every layout apply creates a manifest under `~/.local/state/hyperthemes/layout-b
 
 ```bash
 cmake --build build
+cmake --build build --target test-fast   # core suite only, no full QML window
 ctest --test-dir build --output-on-failure
 QT_QPA_PLATFORM=offscreen ./build/hyperthemes
 ```
 
-The tests cover palette fallbacks, every template, apply/rollback (including btop, Zellij and Hyprland), Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, Quickshell config generation, every generated widget, manifest load, config duplicate/rename/delete with backup, settings persistence/reset, per-theme target memory, CLI listing and apply, export, restoration, a tampered-manifest guard, and QML smoke tests that drive the builder page, its dialogs and the clipboard command. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.
+The tests cover palette fallbacks, every template, apply/rollback (including btop, Zellij and Hyprland), Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, Quickshell config generation, every generated widget, bar styles and monitors, builder presets, manifest load, config duplicate/rename/delete with backup, settings persistence/reset, per-theme target memory, CLI listing, apply and dry-run, export, restoration, a tampered-manifest guard, and QML smoke tests that drive the builder page, its dialogs, favorites, the command palette, compare view and the clipboard command. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.

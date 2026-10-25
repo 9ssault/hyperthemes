@@ -51,6 +51,10 @@ Button {
         opacity: control.enabled ? 1 : 0.6
     }
 
+    HoverHandler {
+        cursorShape: control.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+    }
+
     contentItem: RowLayout {
         spacing: 6
 

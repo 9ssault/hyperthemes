@@ -175,11 +175,17 @@ private slots:
         QVERIFY(m_root->property("shellWidgets").toList().size() >= 13);
 
         bool hasBtopTarget = false;
+        bool hasCursorTarget = false;
         for (const QVariant &entry : m_root->property("targetOptions").toList()) {
-            if (entry.toMap().value(QStringLiteral("key")).toString() == QStringLiteral("btop"))
+            const QString key = entry.toMap().value(QStringLiteral("key")).toString();
+            if (key == QStringLiteral("btop"))
                 hasBtopTarget = true;
+            if (key == QStringLiteral("cursor"))
+                hasCursorTarget = true;
         }
         QVERIFY(hasBtopTarget);
+        QVERIFY(hasCursorTarget);
+        QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("cursor")).toBool(), true);
         QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), false);
         QVERIFY(!m_root->property("targetEnabled").toMap().isEmpty());
 
@@ -387,6 +393,108 @@ private slots:
 
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
         QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), true);
+    }
+
+    void favoritesAndCommandPalette()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVERIFY(!themes.isEmpty());
+        const QVariantMap chosen = themes.first().toMap();
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
+
+        QVERIFY2(QMetaObject::invokeMethod(m_root, "toggleFavorite",
+                                           Q_ARG(QVariant, chosen.value(QStringLiteral("id")))),
+                 "toggleFavorite is not invokable");
+
+        auto *settings = m_root->findChild<QObject *>(QStringLiteral("appSettings"));
+        QVERIFY(settings);
+        QVERIFY(settings->property("favoriteIds").toString().contains(chosen.value(QStringLiteral("id")).toString()));
+
+        m_root->setProperty("favoritesOnly", true);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+        const QVariantList favorites = m_root->property("filtered").toList();
+        QVERIFY(!favorites.isEmpty());
+        for (const QVariant &entry : favorites)
+            QCOMPARE(entry.toMap().value(QStringLiteral("id")).toString(),
+                     chosen.value(QStringLiteral("id")).toString());
+
+        m_root->setProperty("favoritesOnly", false);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "recompute"));
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "openPalette"));
+        QTRY_VERIFY(m_root->property("paletteOpen").toBool());
+        QVERIFY(!m_root->property("paletteModel").toList().isEmpty());
+
+        const QVariantMap pageEntry = {
+            {QStringLiteral("kind"), QStringLiteral("page")},
+            {QStringLiteral("label"), QStringLiteral("Settings")},
+            {QStringLiteral("detail"), QStringLiteral("Go to Settings")},
+            {QStringLiteral("payload"), QStringLiteral("settings")},
+        };
+        QVERIFY(QMetaObject::invokeMethod(m_root, "runPaletteItem", Q_ARG(QVariant, pageEntry)));
+        QCOMPARE(m_root->property("page").toString(), QStringLiteral("settings"));
+        QVERIFY(!m_root->property("paletteOpen").toBool());
+    }
+
+    void compareDialogOpens()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVERIFY(themes.size() > 2);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, themes.first())));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "openCompare"));
+
+        auto *dialog = m_root->findChild<QObject *>(QStringLiteral("compareDialog"));
+        QVERIFY(dialog);
+        QTRY_VERIFY(dialog->property("opened").toBool());
+        QVERIFY(!m_root->property("compareTheme").toMap().isEmpty());
+        QVERIFY(!m_root->property("compareResults").toList().isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+    }
+
+    void shellStylesMonitorsAndPresets()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVERIFY(!themes.isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, themes.first())));
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "applyShellStyle",
+                                          Q_ARG(QVariant, QStringLiteral("pill"))));
+        QCOMPARE(m_root->property("shellStyle").toString(), QStringLiteral("pill"));
+        QVERIFY(m_root->property("shellRadius").toInt() >= 15);
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "setShellMonitors",
+                                          Q_ARG(QVariant, QStringLiteral("DP-1, HDMI-A-1"))));
+        const QVariantList monitors = m_root->property("shellMonitors").toList();
+        QCOMPARE(monitors.size(), 2);
+        QCOMPARE(monitors.at(0).toString(), QStringLiteral("DP-1"));
+        QCOMPARE(monitors.at(1).toString(), QStringLiteral("HDMI-A-1"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "setShellBottomMonitors",
+                                          Q_ARG(QVariant, QStringLiteral("HDMI-A-1"))));
+
+        m_root->setProperty("shellName", QStringLiteral("style-test"));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellBuild"));
+        QTRY_VERIFY(!m_root->property("shellFiles").toStringList().isEmpty());
+        const QString dir = m_root->property("shellResult").toString();
+        QVERIFY(QFileInfo::exists(dir + QStringLiteral("/Theme.qml")));
+
+        QFile themeFile(dir + QStringLiteral("/Theme.qml"));
+        QVERIFY(themeFile.open(QIODevice::ReadOnly));
+        const QString theme = QString::fromUtf8(themeFile.readAll());
+        themeFile.close();
+        QVERIFY(theme.contains(QStringLiteral("style: \"pill\"")));
+        QVERIFY(theme.contains(QStringLiteral("monitors: [\"DP-1\", \"HDMI-A-1\"]")));
+
+        QFile barFile(dir + QStringLiteral("/bar/Bar.qml"));
+        QVERIFY(barFile.open(QIODevice::ReadOnly));
+        const QString bar = QString::fromUtf8(barFile.readAll());
+        barFile.close();
+        QVERIFY(bar.contains(QStringLiteral("theme.hasBar(screen.name)")));
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellSavePreset",
+                                          Q_ARG(QVariant, QStringLiteral("desk-test"))));
+        QTRY_VERIFY(!m_root->property("shellPresets").toList().isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellDeletePreset",
+                                          Q_ARG(QVariant, QStringLiteral("desk-test"))));
     }
 
     void copyCommandUsesTheConfigName()

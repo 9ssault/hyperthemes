@@ -170,11 +170,25 @@ private slots:
         QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, themes.first())));
 
         m_root->setProperty("page", QStringLiteral("shell"));
-        QVERIFY(m_root->property("shellWidgets").toList().size() >= 8);
+        QVERIFY(m_root->property("shellWidgets").toList().size() >= 13);
+
+        bool hasBtopTarget = false;
+        for (const QVariant &entry : m_root->property("targetOptions").toList()) {
+            if (entry.toMap().value(QStringLiteral("key")).toString() == QStringLiteral("btop"))
+                hasBtopTarget = true;
+        }
+        QVERIFY(hasBtopTarget);
+        QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), false);
+        QVERIFY(!m_root->property("targetEnabled").toMap().isEmpty());
 
         m_root->setProperty("shellName", QStringLiteral("test-shell"));
         m_root->setProperty("shellBarHeight", 40);
+        m_root->setProperty("shellGap", 16);
         m_root->setProperty("shellLauncher", false);
+        m_root->setProperty("shellBarPerMonitor", true);
+        m_root->setProperty("shellCompositor", QStringLiteral("sway"));
+        m_root->setProperty("shellClock24h", false);
+        m_root->setProperty("shellShowSeconds", true);
         QVERIFY(QMetaObject::invokeMethod(m_root, "shellBuild"));
         QTRY_VERIFY(!m_root->property("shellFiles").toStringList().isEmpty());
         QCOMPARE(m_root->property("shellError").toString(), QString());
@@ -183,8 +197,47 @@ private slots:
         QVERIFY(dir.endsWith(QStringLiteral("/quickshell/test-shell")));
         QVERIFY(QFileInfo::exists(dir + QStringLiteral("/shell.qml")));
         QVERIFY(QFileInfo::exists(dir + QStringLiteral("/bar/Bar.qml")));
+        QVERIFY(QFileInfo::exists(dir + QStringLiteral("/hyperthemes.json")));
         QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
         QVERIFY(QFileInfo::exists(dir + QStringLiteral("/dashboard/Dashboard.qml")));
+
+        QFile themeFile(dir + QStringLiteral("/Theme.qml"));
+        QVERIFY(themeFile.open(QIODevice::ReadOnly));
+        const QString theme = QString::fromUtf8(themeFile.readAll());
+        themeFile.close();
+        QVERIFY(theme.contains(QStringLiteral("gap: 16")));
+        QVERIFY(theme.contains(QStringLiteral("barPerMonitor: true")));
+        QVERIFY(theme.contains(QStringLiteral("workspaceCompositor: \"sway\"")));
+        QVERIFY(theme.contains(QStringLiteral("clockFormat: \"h:mm:ss AP\"")));
+
+        QFile barFile(dir + QStringLiteral("/bar/Bar.qml"));
+        QVERIFY(barFile.open(QIODevice::ReadOnly));
+        const QString bar = QString::fromUtf8(barFile.readAll());
+        barFile.close();
+        QVERIFY(bar.contains(QStringLiteral("Quickshell.I3")));
+        QVERIFY(!bar.contains(QStringLiteral("Quickshell.Hyprland")));
+
+        const QVariantList generated = m_root->property("shellConfigs").toList();
+        bool foundGenerated = false;
+        for (const QVariant &entry : generated) {
+            if (entry.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("test-shell"))
+                foundGenerated = true;
+        }
+        QVERIFY(foundGenerated);
+        QVERIFY(!m_root->property("shellBackupEntries").toList().isEmpty());
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellValidate"));
+        QVERIFY(!m_root->property("shellValidation").toString().isEmpty());
+
+        m_root->setProperty("shellGap", 4);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellLoad", Q_ARG(QVariant, QStringLiteral("test-shell"))));
+        QTRY_COMPARE(m_root->property("shellGap").toInt(), 16);
+        QCOMPARE(m_root->property("shellLauncher").toBool(), false);
+        QCOMPARE(m_root->property("shellResult").toString(), dir);
+        QVERIFY(!m_root->property("shellFiles").toStringList().isEmpty());
+        auto *launcherToggle = m_root->findChild<QObject *>(QStringLiteral("shellLauncherToggle"));
+        QVERIFY(launcherToggle);
+        QTRY_COMPARE(launcherToggle->property("checked").toBool(), false);
 
         const QVariantMap zones = m_root->property("shellZones").toMap();
         QVERIFY(zones.value(QStringLiteral("center")).toStringList().contains(QStringLiteral("clock")));
@@ -196,6 +249,109 @@ private slots:
                      .contains(QStringLiteral("clock")));
 
         m_root->setProperty("page", QStringLiteral("explore"));
+    }
+
+    void generatedConfigsCanBeRenamedAndDeleted()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVERIFY(!themes.isEmpty());
+        const QVariantMap sourceTheme = themes.first().toMap();
+
+        QVariantMap config = m_shellBuilder.defaults();
+        config.insert(QStringLiteral("name"), QStringLiteral("ui-rename"));
+        config.insert(QStringLiteral("palette"), sourceTheme.value(QStringLiteral("palette")));
+        config.insert(QStringLiteral("themeName"), sourceTheme.value(QStringLiteral("name")));
+        const QVariantMap built = m_shellBuilder.build(config);
+        QVERIFY2(built.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(built.value(QStringLiteral("error")).toString()));
+        const QString from = built.value(QStringLiteral("dir")).toString();
+        QVERIFY(QFileInfo::exists(from + QStringLiteral("/shell.qml")));
+
+        m_root->setProperty("page", QStringLiteral("shell"));
+        auto *renameDialog = m_root->findChild<QObject *>(QStringLiteral("renameDialog"));
+        QVERIFY(renameDialog);
+        renameDialog->setProperty("sourceName", QStringLiteral("ui-rename"));
+        QVERIFY(QMetaObject::invokeMethod(renameDialog, "open"));
+        QTRY_VERIFY(renameDialog->property("opened").toBool());
+
+        auto *content = renameDialog->property("contentItem").value<QObject *>();
+        QVERIFY(content);
+        QTRY_VERIFY_WITH_TIMEOUT(content->property("width").toReal() > 300.0, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(content->property("height").toReal() > 30.0, 2000);
+
+        renameDialog->setProperty("proposedName", QStringLiteral("ui-renamed"));
+        QVERIFY(QMetaObject::invokeMethod(renameDialog, "accept"));
+        QTRY_VERIFY(!QFileInfo::exists(from));
+
+        const QString to = m_temp.path() + QStringLiteral("/config/quickshell/ui-renamed");
+        QVERIFY(QFileInfo::exists(to + QStringLiteral("/shell.qml")));
+
+        bool listed = false;
+        for (const QVariant &entry : m_root->property("shellConfigs").toList()) {
+            if (entry.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("ui-renamed"))
+                listed = true;
+        }
+        QVERIFY(listed);
+
+        auto *deleteDialog = m_root->findChild<QObject *>(QStringLiteral("deleteDialog"));
+        QVERIFY(deleteDialog);
+        deleteDialog->setProperty("targetName", QStringLiteral("ui-renamed"));
+        QVERIFY(QMetaObject::invokeMethod(deleteDialog, "open"));
+        QTRY_VERIFY(deleteDialog->property("opened").toBool());
+        QVERIFY(QMetaObject::invokeMethod(deleteDialog, "accept"));
+        QTRY_VERIFY(!QFileInfo::exists(to));
+
+        bool backedUp = false;
+        for (const QVariant &entry : m_root->property("shellBackupEntries").toList()) {
+            if (entry.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("ui-renamed"))
+                backedUp = true;
+        }
+        QVERIFY(backedUp);
+    }
+
+    void targetSelectionIsRemembered()
+    {
+        QVariantMap chosen;
+        QVariantMap other;
+        const QVariantList themes = m_root->property("themes").toList();
+        for (const QVariant &entry : themes) {
+            const QVariantMap theme = entry.toMap();
+            if (!theme.value(QStringLiteral("palette")).toMap().isEmpty()
+                && theme.value(QStringLiteral("name")).toString().contains(QStringLiteral("Dracula"))) {
+                chosen = theme;
+                break;
+            }
+        }
+        QVERIFY(!chosen.isEmpty());
+        for (const QVariant &entry : themes) {
+            const QVariantMap theme = entry.toMap();
+            if (!theme.value(QStringLiteral("palette")).toMap().isEmpty()
+                && theme.value(QStringLiteral("id")).toString()
+                       != chosen.value(QStringLiteral("id")).toString()) {
+                other = theme;
+                break;
+            }
+        }
+        QVERIFY(!other.isEmpty());
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
+        QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), false);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "setTarget",
+                                          Q_ARG(QVariant, QStringLiteral("btop")),
+                                          Q_ARG(QVariant, true)));
+        QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), true);
+
+        auto *settings = m_root->findChild<QObject *>(QStringLiteral("appSettings"));
+        QVERIFY(settings);
+        const QString stored = settings->property("targetSelections").toString();
+        QVERIFY2(stored.contains(chosen.value(QStringLiteral("id")).toString()), qPrintable(stored));
+        QVERIFY(stored.contains(QStringLiteral("btop")));
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, other)));
+        QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), false);
+
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, chosen)));
+        QCOMPARE(m_root->property("targetEnabled").toMap().value(QStringLiteral("btop")).toBool(), true);
     }
 
     void wallpaperSelectionIsRemembered()

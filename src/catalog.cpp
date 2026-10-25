@@ -42,6 +42,18 @@ QVariantList Catalog::load() const
             continue;
         if (!theme.contains(QStringLiteral("category")))
             theme.insert(QStringLiteral("category"), categoryOf(path));
+
+        // btop, Zellij and Hyprland are palette-only targets, so every theme
+        // with real colours can drive them without editing 1,600 catalog files.
+        if (!theme.value(QStringLiteral("palette")).toMap().isEmpty()) {
+            QStringList targets = theme.value(QStringLiteral("targets")).toStringList();
+            for (const QString &extra : {QStringLiteral("btop"), QStringLiteral("zellij"),
+                                         QStringLiteral("hyprland")}) {
+                if (!targets.contains(extra))
+                    targets << extra;
+            }
+            theme.insert(QStringLiteral("targets"), targets);
+        }
         themes << theme;
     }
 

@@ -45,6 +45,7 @@ private:
     bool backupFile(Session &session, const QString &path, bool system);
     bool writeFile(Session &session, const QString &path, const QByteArray &data, bool system);
     bool ensureInclude(Session &session, const QString &path, const QString &line);
+    bool upsertLine(Session &session, const QString &path, const QString &prefix, const QString &line);
     bool setQtScheme(Session &session, const QString &path);
     void writeManifest(const Session &session) const;
     void setStatus(const QString &status);
@@ -56,6 +57,9 @@ private:
     QString makeKonsole(const Theme &theme) const;
     QString makeKitty(const Theme &theme) const;
     QString makeFoot(const Theme &theme) const;
+    QString makeBtop(const Theme &theme) const;
+    QString makeZellij(const Theme &theme) const;
+    QString makeHyprland(const Theme &theme) const;
 
     void applyWallpaper(Session &session, const Theme &theme);
     void applyKde(Session &session, const Theme &theme, bool systemWide);
@@ -67,12 +71,16 @@ private:
     void applyKonsole(Session &session, const Theme &theme);
     void applyKitty(Session &session, const Theme &theme);
     void applyFoot(Session &session, const Theme &theme);
+    void applyBtop(Session &session, const Theme &theme);
+    void applyZellij(Session &session, const Theme &theme);
+    void applyHyprland(Session &session, const Theme &theme);
     void applySpicetify(Session &session, const Theme &theme);
     void applyVesktop(Session &session, const Theme &theme);
 
     static bool run(const QString &program, const QStringList &args, int timeoutMs = 15000, QString *output = nullptr);
     static bool runPrivileged(const QStringList &args, int timeoutMs = 60000, QString *output = nullptr);
     static QString timestampId(const QString &themeId);
+    static QString uniqueSessionId(const QString &themeId);
     static QString sessionDir(const QString &id);
 
     QString m_lastBackup;

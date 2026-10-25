@@ -112,7 +112,8 @@ private slots:
         const QStringList templates = {
             QStringLiteral("kde.colors"), QStringLiteral("caelestia.json"), QStringLiteral("waybar.css"),
             QStringLiteral("gtk.css"), QStringLiteral("qt.conf"), QStringLiteral("konsole.colorscheme"),
-            QStringLiteral("kitty.conf"), QStringLiteral("foot.ini"), QStringLiteral("spicetify.ini"),
+            QStringLiteral("kitty.conf"), QStringLiteral("foot.ini"), QStringLiteral("btop.theme"),
+            QStringLiteral("zellij.kdl"), QStringLiteral("hyprland.conf"), QStringLiteral("spicetify.ini"),
             QStringLiteral("spicetify-user.css"), QStringLiteral("vesktop.css")
         };
         for (const QString &name : templates) {
@@ -140,6 +141,68 @@ private slots:
         QCOMPARE(roundTrip.value(QStringLiteral("packageId")).toString(), theme.packageId);
         QCOMPARE(roundTrip.value(QStringLiteral("packageStructure")).toString(), theme.packageStructure);
         QCOMPARE(roundTrip.value(QStringLiteral("packageName")).toString(), theme.packageName);
+    }
+
+    void applyExtraTargetsAndRollback()
+    {
+        const QString config = Paths::configHome();
+        QDir(config).removeRecursively();
+
+        QDir().mkpath(config + QStringLiteral("/btop"));
+        writeFile(config + QStringLiteral("/btop/btop.conf"),
+                  QStringLiteral("color_theme = \"Default\"\nupdate_ms = 1000\n"));
+        QDir().mkpath(config + QStringLiteral("/zellij"));
+        writeFile(config + QStringLiteral("/zellij/config.kdl"),
+                  QStringLiteral("theme \"default\"\n"));
+        QDir().mkpath(config + QStringLiteral("/hypr"));
+        writeFile(config + QStringLiteral("/hypr/hyprland.conf"),
+                  QStringLiteral("monitor = , preferred, auto, 1\n"));
+
+        Applier applier;
+        const QVariantMap result = applier.apply(sampleTheme(),
+                                                 {QStringLiteral("btop"), QStringLiteral("zellij"),
+                                                  QStringLiteral("hyprland")},
+                                                 false);
+        QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(result.value(QStringLiteral("error")).toString() + QStringLiteral(" / ")
+                            + result.value(QStringLiteral("warnings")).toStringList().join(QStringLiteral("; "))));
+
+        const QString btopTheme = config + QStringLiteral("/btop/themes/hyperthemes.theme");
+        const QString zellijTheme = config + QStringLiteral("/zellij/themes/hyperthemes.kdl");
+        const QString hyprTheme = config + QStringLiteral("/hypr/hyperthemes.conf");
+        QVERIFY(QFileInfo::exists(btopTheme));
+        QVERIFY(readFile(btopTheme).contains(QStringLiteral("#101014")));
+        QVERIFY(readFile(btopTheme).contains(QStringLiteral("#ff0000")));
+        QVERIFY(QFileInfo::exists(zellijTheme));
+        QVERIFY(readFile(zellijTheme).contains(QStringLiteral("hyperthemes {")));
+        QVERIFY(readFile(zellijTheme).contains(QStringLiteral("#ff0000")));
+        QVERIFY(QFileInfo::exists(hyprTheme));
+        QVERIFY(readFile(hyprTheme).contains(QStringLiteral("rgba(ff0000ee)")));
+
+        const QString btopConfig = readFile(config + QStringLiteral("/btop/btop.conf"));
+        QVERIFY(btopConfig.contains(QStringLiteral("color_theme = \"hyperthemes\"")));
+        QVERIFY(!btopConfig.contains(QStringLiteral("Default")));
+        QVERIFY(btopConfig.contains(QStringLiteral("update_ms = 1000")));
+
+        const QString zellijConfig = readFile(config + QStringLiteral("/zellij/config.kdl"));
+        QVERIFY(zellijConfig.contains(QStringLiteral("theme \"hyperthemes\"")));
+        QVERIFY(!zellijConfig.contains(QStringLiteral("theme \"default\"")));
+
+        const QString hyprConfig = readFile(config + QStringLiteral("/hypr/hyprland.conf"));
+        QVERIFY(hyprConfig.contains(QStringLiteral("source = %1/hypr/hyperthemes.conf").arg(config)));
+        QVERIFY(hyprConfig.contains(QStringLiteral("monitor = , preferred, auto, 1")));
+
+        const QString backup = result.value(QStringLiteral("backup")).toString();
+        QVERIFY(!backup.isEmpty());
+        const QVariantMap restored = applier.rollback(backup);
+        QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(restored.value(QStringLiteral("error")).toString()));
+        QVERIFY(!QFileInfo::exists(btopTheme));
+        QVERIFY(!QFileInfo::exists(zellijTheme));
+        QVERIFY(!QFileInfo::exists(hyprTheme));
+        QVERIFY(readFile(config + QStringLiteral("/btop/btop.conf")).contains(QStringLiteral("color_theme = \"Default\"")));
+        QVERIFY(readFile(config + QStringLiteral("/zellij/config.kdl")).contains(QStringLiteral("theme \"default\"")));
+        QVERIFY(!readFile(config + QStringLiteral("/hypr/hyprland.conf")).contains(QStringLiteral("hyperthemes.conf")));
     }
 
     void applyAndRollbackUserTargets()
@@ -193,27 +256,47 @@ private slots:
         QVERIFY2(elapsed < 2000, qPrintable(QStringLiteral("catalog took %1 ms").arg(elapsed)));
 
         QSet<QString> categories;
+        bool hasExtraTargets = true;
         for (const QVariant &entry : themes) {
             const QVariantMap theme = entry.toMap();
             QVERIFY(!theme.value(QStringLiteral("id")).toString().isEmpty());
             QVERIFY(!theme.value(QStringLiteral("category")).toString().isEmpty());
             QVERIFY(!theme.value(QStringLiteral("source")).toString().isEmpty());
-            QVERIFY(!theme.value(QStringLiteral("targets")).toStringList().isEmpty());
+            const QStringList targets = theme.value(QStringLiteral("targets")).toStringList();
+            QVERIFY(!targets.isEmpty());
+            if (!targets.contains(QStringLiteral("btop")) || !targets.contains(QStringLiteral("zellij"))
+                || !targets.contains(QStringLiteral("hyprland")))
+                hasExtraTargets = false;
             QVERIFY(!theme.value(QStringLiteral("palette")).toMap().isEmpty());
             categories.insert(theme.value(QStringLiteral("category")).toString());
         }
+        QVERIFY(hasExtraTargets);
         QVERIFY2(categories.size() >= 40, qPrintable(QStringLiteral("only %1 categories").arg(categories.size())));
     }
 
     void shellBuilderWritesQuickshellConfig()
     {
         ShellBuilder builder;
-        QVERIFY(builder.widgets().size() >= 8);
+        QVERIFY(builder.widgets().size() >= 13);
+        QVERIFY(builder.defaults().value(QStringLiteral("zones")).toMap()
+                    .value(QStringLiteral("center")).toStringList().contains(QStringLiteral("clock")));
 
         QVariantMap config = builder.defaults();
         config.insert(QStringLiteral("palette"), sampleTheme().value(QStringLiteral("palette")));
         config.insert(QStringLiteral("themeName"), QStringLiteral("Test Theme"));
+        config.insert(QStringLiteral("themeId"), QStringLiteral("test-theme"));
+        config.insert(QStringLiteral("themeMode"), QStringLiteral("dark"));
         config.insert(QStringLiteral("name"), QStringLiteral("hyperthemes-test"));
+        config.insert(QStringLiteral("gap"), 14);
+        config.insert(QStringLiteral("barPerMonitor"), true);
+        config.insert(QStringLiteral("fontFamily"), QStringLiteral("Inter"));
+        config.insert(QStringLiteral("fontSize"), 13);
+        config.insert(QStringLiteral("iconSize"), 18);
+        config.insert(QStringLiteral("clock24h"), false);
+        config.insert(QStringLiteral("showSeconds"), true);
+        config.insert(QStringLiteral("borders"), false);
+        config.insert(QStringLiteral("shadow"), false);
+        config.insert(QStringLiteral("workspaceCount"), 3);
 
         const QVariantMap result = builder.build(config);
         QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
@@ -228,10 +311,21 @@ private slots:
         QVERIFY(files.contains(QStringLiteral("bar/Bar.qml")));
         QVERIFY(files.contains(QStringLiteral("launcher/Launcher.qml")));
         QVERIFY(files.contains(QStringLiteral("dashboard/Dashboard.qml")));
+        QVERIFY(files.contains(QStringLiteral("hyperthemes.json")));
 
         const QString theme = readFile(dir + QStringLiteral("/Theme.qml"));
         QVERIFY(theme.contains(QStringLiteral("#ff0000")));
         QVERIFY(theme.contains(QStringLiteral("barHeight: 34")));
+        QVERIFY(theme.contains(QStringLiteral("gap: 14")));
+        QVERIFY(theme.contains(QStringLiteral("barPerMonitor: true")));
+        QVERIFY(theme.contains(QStringLiteral("fontFamily: \"Inter\"")));
+        QVERIFY(theme.contains(QStringLiteral("fontSize: 13")));
+        QVERIFY(theme.contains(QStringLiteral("iconSize: 18")));
+        QVERIFY(theme.contains(QStringLiteral("clockFormat: \"h:mm:ss AP\"")));
+        QVERIFY(theme.contains(QStringLiteral("borderWidth: 0")));
+        QVERIFY(theme.contains(QStringLiteral("shadow: false")));
+        QVERIFY(theme.contains(QStringLiteral("workspaceCount: 3")));
+        QVERIFY(theme.contains(QStringLiteral("sourceMode: \"dark\"")));
         QVERIFY(theme.contains(QStringLiteral("Test Theme")));
 
         const QString dump = qEnvironmentVariable("HT_SHELL_DUMP");
@@ -251,22 +345,13 @@ private slots:
         // When Quickshell is installed, lint the generated tree so a template
         // change cannot ship syntactically broken QML.
         const QString imports = QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
+        const bool hasQuickshell = QFileInfo::exists(imports + QStringLiteral("/Quickshell"));
         const QString lint = QStandardPaths::findExecutable(QStringLiteral("qmllint"));
-        if (!lint.isEmpty() && QFileInfo::exists(imports + QStringLiteral("/Quickshell"))) {
-            const QStringList targets = {QStringLiteral("shell.qml"), QStringLiteral("Theme.qml"),
-                                         QStringLiteral("bar/Bar.qml"),
-                                         QStringLiteral("launcher/Launcher.qml"),
-                                         QStringLiteral("dashboard/Dashboard.qml")};
-            for (const QString &target : targets) {
-                QProcess process;
-                process.setWorkingDirectory(dir);
-                process.start(lint, {target});
-                QVERIFY(process.waitForFinished(20000));
-                const QString output = QString::fromUtf8(process.readAllStandardOutput()
-                                                         + process.readAllStandardError());
-                QVERIFY2(process.exitCode() == 0,
-                         qPrintable(target + QStringLiteral(": ") + output));
-            }
+        if (!lint.isEmpty() && hasQuickshell) {
+            const QVariantMap linted = builder.lint(QStringLiteral("hyperthemes-test"));
+            QVERIFY2(linted.value(QStringLiteral("ok")).toBool(),
+                     qPrintable(linted.value(QStringLiteral("output")).toString()));
+            QVERIFY(!linted.value(QStringLiteral("skipped")).toBool());
         }
 
         const QString shell = readFile(dir + QStringLiteral("/shell.qml"));
@@ -275,16 +360,74 @@ private slots:
         QVERIFY(shell.contains(QStringLiteral("onLauncherRequested: launcher.toggle()")));
 
         const QString bar = readFile(dir + QStringLiteral("/bar/Bar.qml"));
+        QVERIFY(bar.contains(QStringLiteral("Variants")));
         QVERIFY(bar.contains(QStringLiteral("PanelWindow")));
-        QVERIFY(bar.contains(QStringLiteral("top: true")));
+        QVERIFY(bar.contains(QStringLiteral("top: theme.position !== \"bottom\"")));
+        QVERIFY(bar.contains(QStringLiteral("anchors.horizontalCenter")));
         QVERIFY(bar.contains(QStringLiteral("SystemTray.items")));
+        QVERIFY(bar.contains(QStringLiteral("Pipewire.defaultAudioSink")));
+        QVERIFY(bar.contains(QStringLiteral("Hyprland.workspaces")));
         QVERIFY(bar.contains(QStringLiteral("theme.barHeight")));
 
+        const QVariantMap manifest = QJsonDocument::fromJson(
+            readFile(dir + QStringLiteral("/hyperthemes.json")).toUtf8()).object().toVariantMap();
+        QCOMPARE(manifest.value(QStringLiteral("generator")).toString(), QStringLiteral("HyperThemes"));
+        QCOMPARE(manifest.value(QStringLiteral("config")).toMap().value(QStringLiteral("gap")).toInt(), 14);
+
+        const QVariantMap loaded = builder.load(QStringLiteral("hyperthemes-test"));
+        QVERIFY2(loaded.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(loaded.value(QStringLiteral("error")).toString()));
+        const QVariantMap loadedConfig = loaded.value(QStringLiteral("config")).toMap();
+        QCOMPARE(loadedConfig.value(QStringLiteral("name")).toString(), QStringLiteral("hyperthemes-test"));
+        QCOMPARE(loadedConfig.value(QStringLiteral("gap")).toInt(), 14);
+        QCOMPARE(loadedConfig.value(QStringLiteral("themeName")).toString(), QStringLiteral("Test Theme"));
+        QCOMPARE(loadedConfig.value(QStringLiteral("themeId")).toString(), QStringLiteral("test-theme"));
+        QCOMPARE(loadedConfig.value(QStringLiteral("zones")).toMap()
+                     .value(QStringLiteral("center")).toStringList().first(),
+                 QStringLiteral("clock"));
+
+        bool listed = false;
+        for (const QVariant &entry : builder.configs()) {
+            const QVariantMap item = entry.toMap();
+            if (item.value(QStringLiteral("name")).toString() == QStringLiteral("hyperthemes-test")) {
+                listed = true;
+                QVERIFY(item.value(QStringLiteral("managed")).toBool());
+            }
+        }
+        QVERIFY(listed);
+
+        QCOMPARE(builder.settings().value(QStringLiteral("gap")).toInt(), 14);
+        QCOMPARE(builder.settings().value(QStringLiteral("name")).toString(), QStringLiteral("hyperthemes-test"));
+
+        builder.resetSettings();
+        QCOMPARE(builder.settings().value(QStringLiteral("gap")).toInt(), 10);
+        QCOMPARE(builder.settings().value(QStringLiteral("name")).toString(), QStringLiteral("hyperthemes"));
+
+        if (!QStandardPaths::findExecutable(QStringLiteral("bsdtar")).isEmpty()
+            || !QStandardPaths::findExecutable(QStringLiteral("tar")).isEmpty()) {
+            const QString archive = m_temp.path() + QStringLiteral("/export/hyperthemes-test.tar.gz");
+            const QVariantMap exported = builder.exportConfig(QStringLiteral("hyperthemes-test"), archive);
+            QVERIFY2(exported.value(QStringLiteral("ok")).toBool(),
+                     qPrintable(exported.value(QStringLiteral("error")).toString()));
+            QVERIFY(QFileInfo::exists(archive));
+            QVERIFY(QFileInfo(archive).size() > 0);
+            if (!QStandardPaths::findExecutable(QStringLiteral("bsdtar")).isEmpty()) {
+                QProcess listing;
+                listing.start(QStringLiteral("bsdtar"), {QStringLiteral("-tf"), archive});
+                QVERIFY(listing.waitForFinished(10000));
+                QCOMPARE(listing.exitCode(), 0);
+                const QString contents = QString::fromUtf8(listing.readAllStandardOutput());
+                QVERIFY(contents.contains(QStringLiteral("hyperthemes-test/shell.qml")));
+                QVERIFY(contents.contains(QStringLiteral("hyperthemes-test/Theme.qml")));
+            }
+        }
+
         config.insert(QStringLiteral("position"), QStringLiteral("bottom"));
+        config.insert(QStringLiteral("compositor"), QStringLiteral("sway"));
         config.insert(QStringLiteral("launcher"), false);
         config.insert(QStringLiteral("dashboard"), false);
         config.insert(QStringLiteral("zones"), QVariantMap{
-            {QStringLiteral("left"), QStringList{QStringLiteral("logo")}},
+            {QStringLiteral("left"), QStringList{QStringLiteral("logo"), QStringLiteral("workspaces")}},
             {QStringLiteral("center"), QStringList{QStringLiteral("media")}},
             {QStringLiteral("right"), QStringList{QStringLiteral("battery")}},
         });
@@ -294,8 +437,17 @@ private slots:
         QVERIFY(!second.value(QStringLiteral("backup")).toString().isEmpty());
         QVERIFY(builder.backups().size() >= 2);
 
+        const QVariantList entries = builder.backupEntries();
+        QVERIFY(!entries.isEmpty());
+        QVERIFY(entries.first().toMap().contains(QStringLiteral("created")));
+        QCOMPARE(entries.first().toMap().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("hyperthemes-test"));
+
         const QString bottomBar = readFile(dir + QStringLiteral("/bar/Bar.qml"));
-        QVERIFY(bottomBar.contains(QStringLiteral("bottom: true")));
+        QVERIFY(bottomBar.contains(QStringLiteral("Quickshell.I3")));
+        QVERIFY(bottomBar.contains(QStringLiteral("I3.workspaces")));
+        QVERIFY(!bottomBar.contains(QStringLiteral("Quickshell.Hyprland")));
+        QVERIFY(bottomBar.contains(QStringLiteral("bottom: theme.position === \"bottom\"")));
         QVERIFY(!bottomBar.contains(QStringLiteral("top: true")));
         QVERIFY(!bottomBar.contains(QStringLiteral("SystemTray.items")));
         QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
@@ -312,10 +464,160 @@ private slots:
         QVERIFY(!rejected.value(QStringLiteral("ok")).toBool());
         QVERIFY(rejected.value(QStringLiteral("error")).toString().contains(QStringLiteral("theme")));
 
+        QVERIFY(!builder.run(QStringLiteral("missing-config")).value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.run(QStringLiteral("Bad Name")).value(QStringLiteral("ok")).toBool());
+
         const QVariantMap restored = builder.restore(second.value(QStringLiteral("backup")).toString());
         QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
                  qPrintable(restored.value(QStringLiteral("error")).toString()));
         QVERIFY(QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
+
+        // A tampered manifest must not be able to remove a folder outside the
+        // Quickshell config tree.
+        const QString outside = m_temp.path() + QStringLiteral("/outside-config");
+        QDir().mkpath(outside);
+        writeFile(outside + QStringLiteral("/keep.txt"), QStringLiteral("keep"));
+        const QString fakeBackup = Paths::stateDir() + QStringLiteral("/shell-backups/tampered");
+        QDir().mkpath(fakeBackup + QStringLiteral("/files"));
+        writeFile(fakeBackup + QStringLiteral("/manifest.json"),
+                  QStringLiteral("{\"id\":\"tampered\",\"dir\":\"%1\",\"existed\":false}").arg(outside));
+        const QVariantMap guarded = builder.restore(QStringLiteral("tampered"));
+        QVERIFY(!guarded.value(QStringLiteral("ok")).toBool());
+        QVERIFY(QFileInfo::exists(outside + QStringLiteral("/keep.txt")));
+    }
+
+    void shellBuilderCoversEveryWidget()
+    {
+        ShellBuilder builder;
+        QVariantMap config = builder.defaults();
+        config.insert(QStringLiteral("name"), QStringLiteral("all-widgets"));
+        config.insert(QStringLiteral("palette"), sampleTheme().value(QStringLiteral("palette")));
+        config.insert(QStringLiteral("themeName"), QStringLiteral("Test Theme"));
+        config.insert(QStringLiteral("compositor"), QStringLiteral("sway"));
+        config.insert(QStringLiteral("barPerMonitor"), false);
+        config.insert(QStringLiteral("zones"), QVariantMap{
+            {QStringLiteral("left"), QStringList{QStringLiteral("logo"), QStringLiteral("workspaces"),
+                                                 QStringLiteral("launcher"), QStringLiteral("clock"),
+                                                 QStringLiteral("date")}},
+            {QStringLiteral("center"), QStringList{QStringLiteral("media"), QStringLiteral("volume")}},
+            {QStringLiteral("right"), QStringList{QStringLiteral("network"), QStringLiteral("bluetooth"),
+                                                  QStringLiteral("tray"), QStringLiteral("battery"),
+                                                  QStringLiteral("statusIcons"), QStringLiteral("power")}},
+        });
+
+        const QVariantMap result = builder.build(config);
+        QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(result.value(QStringLiteral("error")).toString()));
+        const QString dir = result.value(QStringLiteral("dir")).toString();
+
+        const QString bar = readFile(dir + QStringLiteral("/bar/Bar.qml"));
+        const QStringList markers = {
+            QStringLiteral("logoHover"), QStringLiteral("I3.workspaces"),
+            QStringLiteral("clockLabel"), QStringLiteral("dateLabel"),
+            QStringLiteral("mediaWidget"), QStringLiteral("volumeWidget"),
+            QStringLiteral("networkWidget"), QStringLiteral("bluetoothWidget"),
+            QStringLiteral("SystemTray.items"), QStringLiteral("batteryWidget"),
+            QStringLiteral("statusHover"), QStringLiteral("powerHover"),
+            QStringLiteral("launcherHover"),
+        };
+        for (const QString &marker : markers)
+            QVERIFY2(bar.contains(marker), qPrintable(marker));
+        QCOMPARE(bar.count(QStringLiteral("id: clockLabel")), 1);
+
+        const QString imports = QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
+        if (!QStandardPaths::findExecutable(QStringLiteral("qmllint")).isEmpty()
+            && QFileInfo::exists(imports + QStringLiteral("/Quickshell"))) {
+            const QVariantMap linted = builder.lint(QStringLiteral("all-widgets"));
+            QVERIFY2(linted.value(QStringLiteral("ok")).toBool(),
+                     qPrintable(linted.value(QStringLiteral("output")).toString()));
+        }
+
+        const QString dump = qEnvironmentVariable("HT_SHELL_DUMP");
+        if (!dump.isEmpty()) {
+            const QString target = dump + QStringLiteral("-all-widgets");
+            QDir(target).removeRecursively();
+            QDir().mkpath(target);
+            QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QString path = it.next();
+                const QString relative = QDir(dir).relativeFilePath(path);
+                const QString destination = target + QLatin1Char('/') + relative;
+                QDir().mkpath(QFileInfo(destination).absolutePath());
+                QFile::copy(path, destination);
+            }
+        }
+    }
+
+    void shellBuilderRenamesAndDeletesConfigs()
+    {
+        ShellBuilder builder;
+        QVariantMap config = builder.defaults();
+        config.insert(QStringLiteral("name"), QStringLiteral("rename-source"));
+        config.insert(QStringLiteral("palette"), sampleTheme().value(QStringLiteral("palette")));
+        config.insert(QStringLiteral("themeName"), QStringLiteral("Test Theme"));
+
+        const QVariantMap built = builder.build(config);
+        QVERIFY2(built.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(built.value(QStringLiteral("error")).toString()));
+        const QString from = built.value(QStringLiteral("dir")).toString();
+        QVERIFY(QFileInfo::exists(from + QStringLiteral("/shell.qml")));
+
+        QVERIFY(!builder.renameConfig(QStringLiteral("rename-source"), QStringLiteral("Bad Name"))
+                     .value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.renameConfig(QStringLiteral("rename-source"), QStringLiteral("../escape"))
+                     .value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.renameConfig(QStringLiteral("rename-source"), QStringLiteral("rename-source"))
+                     .value(QStringLiteral("ok")).toBool());
+
+        QVariantMap taken = config;
+        taken.insert(QStringLiteral("name"), QStringLiteral("rename-target"));
+        QVERIFY(builder.build(taken).value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.renameConfig(QStringLiteral("rename-source"), QStringLiteral("rename-target"))
+                     .value(QStringLiteral("ok")).toBool());
+        QVERIFY(builder.removeConfig(QStringLiteral("rename-target")).value(QStringLiteral("ok")).toBool());
+
+        const QVariantMap renamed = builder.renameConfig(QStringLiteral("rename-source"),
+                                                         QStringLiteral("renamed"));
+        QVERIFY2(renamed.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(renamed.value(QStringLiteral("error")).toString()));
+        QCOMPARE(renamed.value(QStringLiteral("name")).toString(), QStringLiteral("renamed"));
+        QVERIFY(!QFileInfo::exists(from));
+
+        const QString to = renamed.value(QStringLiteral("dir")).toString();
+        QCOMPARE(to, Paths::configHome() + QStringLiteral("/quickshell/renamed"));
+        QVERIFY(QFileInfo::exists(to + QStringLiteral("/shell.qml")));
+
+        const QVariantMap manifest = QJsonDocument::fromJson(
+            readFile(to + QStringLiteral("/hyperthemes.json")).toUtf8()).object().toVariantMap();
+        QCOMPARE(manifest.value(QStringLiteral("name")).toString(), QStringLiteral("renamed"));
+        QCOMPARE(manifest.value(QStringLiteral("config")).toMap().value(QStringLiteral("name")).toString(),
+                 QStringLiteral("renamed"));
+        QVERIFY(builder.load(QStringLiteral("renamed")).value(QStringLiteral("ok")).toBool());
+        QVERIFY(!builder.load(QStringLiteral("rename-source")).value(QStringLiteral("ok")).toBool());
+
+        bool listed = false;
+        for (const QVariant &entry : builder.configs()) {
+            if (entry.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("renamed"))
+                listed = true;
+        }
+        QVERIFY(listed);
+
+        const QVariantMap removed = builder.removeConfig(QStringLiteral("renamed"));
+        QVERIFY2(removed.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(removed.value(QStringLiteral("error")).toString()));
+        QVERIFY(!QFileInfo::exists(to));
+
+        const QString backup = removed.value(QStringLiteral("backup")).toString();
+        QVERIFY(!backup.isEmpty());
+        QVERIFY(QFileInfo::exists(Paths::stateDir() + QStringLiteral("/shell-backups/") + backup
+                                  + QStringLiteral("/files/shell.qml")));
+
+        const QVariantMap restored = builder.restore(backup);
+        QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(restored.value(QStringLiteral("error")).toString()));
+        QVERIFY(QFileInfo::exists(to + QStringLiteral("/shell.qml")));
+
+        QVERIFY(!builder.removeConfig(QStringLiteral("never-existed")).value(QStringLiteral("ok")).toBool());
     }
 
     void wallpaperOnlyApplyChecksTheFile()

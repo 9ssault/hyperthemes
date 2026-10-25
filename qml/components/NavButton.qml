@@ -8,10 +8,20 @@ Item {
 
     property url iconSource
     property string label: ""
+    property string hint: ""
     property bool active: false
     signal clicked()
 
     implicitHeight: 40
+    activeFocusOnTab: true
+
+    Accessible.role: Accessible.Button
+    Accessible.name: root.label
+    Accessible.description: root.hint
+
+    Keys.onReturnPressed: root.clicked()
+    Keys.onEnterPressed: root.clicked()
+    Keys.onSpacePressed: root.clicked()
 
     readonly property var appTheme: Window.window && Window.window.uiColors ? Window.window.uiColors : null
 
@@ -25,6 +35,8 @@ Item {
         color: root.active
             ? root.themeColor("elevated", "#211b28")
             : hover.hovered ? root.themeColor("panel2", "#19151e") : "transparent"
+        border.width: root.activeFocus ? 1 : 0
+        border.color: root.themeColor("accent", "#cfbcff")
 
         Rectangle {
             visible: root.active
@@ -70,4 +82,8 @@ Item {
     TapHandler {
         onTapped: root.clicked()
     }
+
+    ToolTip.visible: hover.hovered
+    ToolTip.text: root.hint !== "" ? root.label + "  ·  " + root.hint : root.label
+    ToolTip.delay: 700
 }

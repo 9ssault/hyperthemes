@@ -18,7 +18,8 @@ ApplicationWindow {
     color: colors.bg
     font.family: Qt.application.font.family
 
-    readonly property var allTargets: ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "spicetify", "vesktop"]
+    readonly property var allTargets: ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "btop", "zellij", "hyprland", "spicetify", "vesktop"]
+    readonly property var extraTargets: ["btop", "zellij", "hyprland"]
 
     property var themes: []
     property var localThemes: []
@@ -78,13 +79,31 @@ ApplicationWindow {
     property int shellMargin: 6
     property int shellRadius: 10
     property real shellOpacity: 0.94
+    property int shellGap: 10
+    property bool shellBarPerMonitor: false
+    property bool shellClock24h: true
+    property bool shellShowSeconds: false
+    property bool shellBorders: true
+    property bool shellShadow: true
+    property string shellFontFamily: ""
+    property int shellFontSize: 12
+    property int shellIconSize: 16
+    property int shellWorkspaceCount: 5
+    property string shellCompositor: "hyprland"
     property bool shellLauncher: true
     property bool shellDashboard: true
     property bool shellHasQuickshell: false
+    readonly property bool shellRunning: ShellBuilder.running
+    readonly property string shellRunLog: ShellBuilder.runLog
     property string shellResult: ""
     property var shellFiles: []
     property var shellBackups: []
+    property var shellBackupEntries: []
+    property var shellConfigs: []
     property string shellError: ""
+    property string shellValidation: ""
+    property bool shellValidationOk: true
+    property string shellLoadedTheme: ""
 
     property string wallpaperPath: ""
     property string wallpaperUrl: ""
@@ -182,6 +201,9 @@ ApplicationWindow {
             konsole: "Konsole",
             kitty: "kitty",
             foot: "foot",
+            btop: "btop",
+            zellij: "Zellij",
+            hyprland: "Hyprland",
             spicetify: "Spotify / Spicetify",
             vesktop: "Discord / Vesktop",
             wallpaper: "Wallpaper"
@@ -397,6 +419,33 @@ ApplicationWindow {
         }
     }
 
+    function savedTargetList(themeId) {
+        if (!themeId)
+            return null;
+        var map;
+        try {
+            map = JSON.parse(prefs.targetSelections || "{}");
+        } catch (error) {
+            return null;
+        }
+        if (!map || !(map[themeId] instanceof Array))
+            return null;
+        return map[themeId];
+    }
+
+    function rememberTargets() {
+        if (!selected || !hasPalette(selected))
+            return;
+        var map;
+        try {
+            map = JSON.parse(prefs.targetSelections || "{}") || {};
+        } catch (error) {
+            map = {};
+        }
+        map[selected.id] = targetList();
+        prefs.targetSelections = JSON.stringify(map);
+    }
+
     function selectTheme(item) {
         if (!item)
             return;
@@ -409,14 +458,31 @@ ApplicationWindow {
         remoteInstallError = "";
         var options = [];
         var enabled = {};
-        var targets = item.targets && item.targets.length > 0 ? item.targets : allTargets;
+        var targets = item.targets && item.targets.length > 0 ? item.targets.slice() : allTargets.slice();
+        if (item.palette && Object.keys(item.palette).length > 0) {
+            for (var extra = 0; extra < extraTargets.length; ++extra) {
+                if (targets.indexOf(extraTargets[extra]) < 0)
+                    targets.push(extraTargets[extra]);
+            }
+        }
         for (var i = 0; i < targets.length; ++i) {
             var key = targets[i];
             if (allTargets.indexOf(key) < 0 && key !== "wallpaper")
                 continue;
             options.push({ key: key, label: targetLabel(key) });
-            enabled[key] = true;
+            // btop, Zellij and Hyprland are opt-in: available everywhere, but
+            // silent for users who do not use them.
+            enabled[key] = extraTargets.indexOf(key) < 0;
         }
+
+        // Reuse the choices made for this theme last time, ignoring any target
+        // the theme no longer offers.
+        var saved = savedTargetList(item.id);
+        if (saved) {
+            for (var savedKey in enabled)
+                enabled[savedKey] = saved.indexOf(savedKey) >= 0;
+        }
+
         targetOptions = options;
         targetEnabled = enabled;
     }
@@ -427,6 +493,7 @@ ApplicationWindow {
             next[k] = targetEnabled[k];
         next[key] = value;
         targetEnabled = next;
+        rememberTargets();
     }
 
     function targetList() {
@@ -493,18 +560,167 @@ ApplicationWindow {
 
     function loadShellDefaults() {
         shellWidgets = ShellBuilder.widgets();
-        var defaults = ShellBuilder.defaults();
-        shellName = defaults.name;
-        shellPosition = defaults.position;
-        shellBarHeight = defaults.barHeight;
-        shellMargin = defaults.margin;
-        shellRadius = defaults.radius;
-        shellOpacity = defaults.opacity;
-        shellLauncher = defaults.launcher;
-        shellDashboard = defaults.dashboard;
-        shellZones = defaults.zones;
+        applyShellConfig(ShellBuilder.settings());
         shellHasQuickshell = ShellBuilder.quickshellAvailable();
+        refreshShellLists();
+    }
+
+    function applyShellConfig(config) {
+        if (!config)
+            return;
+        shellName = config.name !== undefined ? config.name : shellName;
+        shellPosition = config.position !== undefined ? config.position : shellPosition;
+        shellBarHeight = config.barHeight !== undefined ? config.barHeight : shellBarHeight;
+        shellMargin = config.margin !== undefined ? config.margin : shellMargin;
+        shellRadius = config.radius !== undefined ? config.radius : shellRadius;
+        shellOpacity = config.opacity !== undefined ? config.opacity : shellOpacity;
+        shellGap = config.gap !== undefined ? config.gap : shellGap;
+        shellBarPerMonitor = config.barPerMonitor !== undefined ? config.barPerMonitor : shellBarPerMonitor;
+        shellClock24h = config.clock24h !== undefined ? config.clock24h : shellClock24h;
+        shellShowSeconds = config.showSeconds !== undefined ? config.showSeconds : shellShowSeconds;
+        shellBorders = config.borders !== undefined ? config.borders : shellBorders;
+        shellShadow = config.shadow !== undefined ? config.shadow : shellShadow;
+        shellFontFamily = config.fontFamily !== undefined ? config.fontFamily : shellFontFamily;
+        shellFontSize = config.fontSize !== undefined ? config.fontSize : shellFontSize;
+        shellIconSize = config.iconSize !== undefined ? config.iconSize : shellIconSize;
+        shellWorkspaceCount = config.workspaceCount !== undefined ? config.workspaceCount : shellWorkspaceCount;
+        shellCompositor = config.compositor !== undefined ? config.compositor : shellCompositor;
+        shellLauncher = config.launcher !== undefined ? config.launcher : shellLauncher;
+        shellDashboard = config.dashboard !== undefined ? config.dashboard : shellDashboard;
+        shellZones = config.zones !== undefined ? config.zones : { left: [], center: [], right: [] };
+    }
+
+    function refreshShellLists() {
         shellBackups = ShellBuilder.backups();
+        shellBackupEntries = ShellBuilder.backupEntries();
+        shellConfigs = ShellBuilder.configs();
+    }
+
+    function themeById(id) {
+        if (!id)
+            return null;
+        var pools = [themes, localThemes, remoteThemes];
+        for (var p = 0; p < pools.length; ++p) {
+            for (var i = 0; i < pools[p].length; ++i) {
+                if (pools[p][i].id === id)
+                    return pools[p][i];
+            }
+        }
+        return null;
+    }
+
+    function applyShellPreset(config, name) {
+        applyShellConfig(config);
+        shellResult = "";
+        shellFiles = [];
+        shellError = "";
+        shellValidation = "";
+        shellValidationOk = true;
+        shellLoadedTheme = config.themeName || "";
+        refreshShellLists();
+    }
+
+    function shellLoad(name) {
+        var result = ShellBuilder.load(name);
+        if (!result.ok) {
+            shellError = result.error || "The config could not be loaded.";
+            notify(shellError);
+            return;
+        }
+        applyShellPreset(result.config, name);
+        shellResult = result.dir;
+        shellFiles = result.files || [];
+        var theme = themeById(result.config.themeId);
+        if (theme) {
+            selectTheme(theme);
+            notify("Loaded " + name + " with " + theme.name);
+        } else {
+            notify("Loaded " + name + "; pick its source theme before rebuilding the palette.");
+        }
+    }
+
+    function shellRename(from, to) {
+        var result = ShellBuilder.renameConfig(from, to);
+        if (!result.ok) {
+            shellError = result.error || "The config could not be renamed.";
+            notify(shellError);
+            return;
+        }
+        if (shellName === from)
+            shellName = result.name;
+        if (shellResult === ShellBuilder.configDir(from))
+            shellResult = result.dir;
+        refreshShellLists();
+        notify("Renamed " + from + " to " + result.name);
+    }
+
+    function shellRemove(name) {
+        var dir = ShellBuilder.configDir(name);
+        var result = ShellBuilder.removeConfig(name);
+        if (!result.ok) {
+            shellError = result.error || "The config could not be deleted.";
+            notify(shellError);
+            return;
+        }
+        if (shellResult === dir) {
+            shellResult = "";
+            shellFiles = [];
+            shellValidation = "";
+        }
+        refreshShellLists();
+        notify("Deleted " + name + " · backup " + result.backup);
+    }
+
+    function shellValidate() {
+        var result = ShellBuilder.lint(shellName);
+        shellValidationOk = result.skipped ? true : result.ok;
+        if (result.ok) {
+            shellValidation = "qmllint checked " + result.files.length + " files without errors.";
+        } else {
+            shellValidation = result.error || (result.errors || []).join("\n");
+        }
+        notify(result.ok ? "Quickshell config validated" : (result.skipped ? "Validation skipped" : "Quickshell config has problems"));
+    }
+
+    function shellRun() {
+        var result = ShellBuilder.run(shellName);
+        if (result.ok) {
+            notify("Running " + shellName + " · " + result.command);
+        } else {
+            shellError = result.error || "Quickshell did not start.";
+            notify(shellError);
+        }
+    }
+
+    function shellStop() {
+        ShellBuilder.stopRun();
+        notify("Stopped the generated shell");
+    }
+
+    function shellResetSettings() {
+        ShellBuilder.resetSettings();
+        applyShellConfig(ShellBuilder.settings());
+        shellValidation = "";
+        shellValidationOk = true;
+        notify("Shell builder settings reset to defaults");
+    }
+
+    function openShellExport() {
+        if (shellName === "" || shellResult === "") {
+            notify("Write the config before exporting it.");
+            return;
+        }
+        shellExportDialog.open();
+    }
+
+    function shellExport(path) {
+        var result = ShellBuilder.exportConfig(shellName, path);
+        if (result.ok) {
+            notify("Exported " + shellName + " to " + result.path);
+        } else {
+            shellError = result.error || "The config could not be exported.";
+            notify(shellError);
+        }
     }
 
     function shellZoneList(zone) {
@@ -532,8 +748,12 @@ ApplicationWindow {
             logo: "◆",
             workspaces: "●●●",
             launcher: "⌕",
-            clock: "12:30",
+            clock: shellShowSeconds ? "12:30:45" : "12:30",
+            date: "25 Oct",
             media: "♪",
+            volume: "🔊",
+            network: "⌁",
+            bluetooth: "ᛒ",
             tray: "▦",
             battery: "82%",
             statusIcons: "◍",
@@ -550,11 +770,24 @@ ApplicationWindow {
             margin: shellMargin,
             radius: shellRadius,
             opacity: shellOpacity,
+            gap: shellGap,
+            barPerMonitor: shellBarPerMonitor,
+            clock24h: shellClock24h,
+            showSeconds: shellShowSeconds,
+            borders: shellBorders,
+            shadow: shellShadow,
+            fontFamily: shellFontFamily,
+            fontSize: shellFontSize,
+            iconSize: shellIconSize,
+            workspaceCount: shellWorkspaceCount,
+            compositor: shellCompositor,
             launcher: shellLauncher,
             dashboard: shellDashboard,
             zones: shellZones,
             palette: selected ? selected.palette : ({}),
-            themeName: selected ? selected.name : "HyperThemes"
+            themeName: selected ? selected.name : "HyperThemes",
+            themeId: selected ? selected.id : "",
+            themeMode: selected ? selected.mode : ""
         };
     }
 
@@ -562,11 +795,15 @@ ApplicationWindow {
         shellError = "";
         shellResult = "";
         shellFiles = [];
+        shellValidation = "";
+        shellValidationOk = true;
         var result = ShellBuilder.build(shellConfig());
         if (result.ok) {
+            if (result.config)
+                applyShellConfig(result.config);
             shellResult = result.dir;
             shellFiles = result.files;
-            shellBackups = ShellBuilder.backups();
+            refreshShellLists();
             notify("Quickshell config written to " + result.dir);
         } else {
             shellError = result.error || "The config could not be written.";
@@ -577,7 +814,7 @@ ApplicationWindow {
     function shellRestore(id) {
         var result = ShellBuilder.restore(id);
         if (result.ok) {
-            shellBackups = ShellBuilder.backups();
+            refreshShellLists();
             notify((result.warnings || ["Restored"])[0]);
         } else {
             notify(result.error || "The backup could not be restored.");
@@ -1127,15 +1364,32 @@ ApplicationWindow {
         onActivated: searchField.forceActiveFocus()
     }
 
+    Shortcut { sequence: "Ctrl+1"; onActivated: root.page = "explore" }
+    Shortcut { sequence: "Ctrl+2"; onActivated: root.page = "categories" }
+    Shortcut { sequence: "Ctrl+3"; onActivated: root.page = "mine" }
+    Shortcut { sequence: "Ctrl+4"; onActivated: root.page = "dynamic" }
+    Shortcut { sequence: "Ctrl+5"; onActivated: root.page = "layouts" }
+    Shortcut { sequence: "Ctrl+6"; onActivated: root.page = "shell" }
+    Shortcut { sequence: "Ctrl+7"; onActivated: root.page = "settings" }
+
     Shortcut {
         sequence: "Escape"
-        onActivated: searchField.focus = false
+        onActivated: {
+            searchField.focus = false;
+            root.toast = "";
+        }
     }
 
     Timer {
         id: toastTimer
         interval: 5000
         onTriggered: root.toast = ""
+    }
+
+    Timer {
+        id: shellSaveTimer
+        interval: 700
+        onTriggered: ShellBuilder.saveSettings(root.shellConfig())
     }
 
     Connections {
@@ -1182,6 +1436,15 @@ ApplicationWindow {
         }
     }
 
+    FileDialog {
+        id: shellExportDialog
+        title: "Export the Quickshell config"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Quickshell archive (*.tar.gz *.tgz)"]
+        defaultSuffix: "tar.gz"
+        onAccepted: root.shellExport(root.localPath(selectedFile.toString()))
+    }
+
     SystemPalette {
         id: systemColors
         colorGroup: SystemPalette.Active
@@ -1213,12 +1476,14 @@ ApplicationWindow {
 
     Settings {
         id: prefs
+        objectName: "appSettings"
         category: "appearance"
         property alias followPalette: root.followPalette
         property alias systemWide: root.systemWide
         property alias page: root.page
         property alias wallpaperPath: root.wallpaperPath
         property string lastThemeId: ""
+        property string targetSelections: "{}"
     }
 
     palette.window: colors.bg
@@ -1236,6 +1501,27 @@ ApplicationWindow {
     palette.placeholderText: colors.faint
 
     onWallpaperPathChanged: wallpaperUrl = fileUrl(wallpaperPath)
+
+    onShellNameChanged: shellSaveTimer.restart()
+    onShellPositionChanged: shellSaveTimer.restart()
+    onShellBarHeightChanged: shellSaveTimer.restart()
+    onShellMarginChanged: shellSaveTimer.restart()
+    onShellRadiusChanged: shellSaveTimer.restart()
+    onShellOpacityChanged: shellSaveTimer.restart()
+    onShellGapChanged: shellSaveTimer.restart()
+    onShellBarPerMonitorChanged: shellSaveTimer.restart()
+    onShellClock24hChanged: shellSaveTimer.restart()
+    onShellShowSecondsChanged: shellSaveTimer.restart()
+    onShellBordersChanged: shellSaveTimer.restart()
+    onShellShadowChanged: shellSaveTimer.restart()
+    onShellFontFamilyChanged: shellSaveTimer.restart()
+    onShellFontSizeChanged: shellSaveTimer.restart()
+    onShellIconSizeChanged: shellSaveTimer.restart()
+    onShellWorkspaceCountChanged: shellSaveTimer.restart()
+    onShellCompositorChanged: shellSaveTimer.restart()
+    onShellLauncherChanged: shellSaveTimer.restart()
+    onShellDashboardChanged: shellSaveTimer.restart()
+    onShellZonesChanged: shellSaveTimer.restart()
 
     Component.onCompleted: {
         if (wallpaperPath !== "")
@@ -1303,6 +1589,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/explore.svg"
                     label: "Explore"
+                    hint: "Ctrl+1"
                     active: root.page === "explore"
                     onClicked: root.page = "explore"
                 }
@@ -1311,6 +1598,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/grid.svg"
                     label: "Categories"
+                    hint: "Ctrl+2"
                     active: root.page === "categories"
                     onClicked: root.page = "categories"
                 }
@@ -1319,6 +1607,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/heart.svg"
                     label: "My themes"
+                    hint: "Ctrl+3"
                     active: root.page === "mine"
                     onClicked: root.page = "mine"
                 }
@@ -1327,6 +1616,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/palette.svg"
                     label: "Dynamic"
+                    hint: "Ctrl+4"
                     active: root.page === "dynamic"
                     onClicked: root.page = "dynamic"
                 }
@@ -1335,6 +1625,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/layout.svg"
                     label: "Layouts"
+                    hint: "Ctrl+5"
                     active: root.page === "layouts"
                     onClicked: root.page = "layouts"
                 }
@@ -1343,6 +1634,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/window.svg"
                     label: "Shell"
+                    hint: "Ctrl+6"
                     active: root.page === "shell"
                     onClicked: root.page = "shell"
                 }
@@ -1351,6 +1643,7 @@ ApplicationWindow {
                     Layout.fillWidth: true
                     iconSource: "qrc:/data/icons/settings.svg"
                     label: "Settings"
+                    hint: "Ctrl+7"
                     active: root.page === "settings"
                     onClicked: root.page = "settings"
                 }
@@ -1690,6 +1983,16 @@ ApplicationWindow {
                             border.width: 1
                             border.color: root.targetFilter === modelData.value ? colors.accent : colors.border
 
+                            Accessible.role: Accessible.Button
+                            Accessible.name: modelData.label + " themes"
+
+                            HoverHandler { id: filterHover }
+                            ToolTip.visible: filterHover.hovered
+                            ToolTip.text: modelData.value === "All"
+                                ? "Every target"
+                                : "Themes that can drive " + modelData.label
+                            ToolTip.delay: 700
+
                             Text {
                                 id: chipText
                                 anchors.centerIn: parent
@@ -1761,11 +2064,13 @@ ApplicationWindow {
 
                             delegate: ThemeCard {
                                 required property var modelData
+                                required property int index
 
                                 width: grid.cellWidth - 12
                                 height: 248
                                 item: modelData
                                 selected: root.selected && root.selected.id === modelData.id
+                                current: grid.activeFocus && grid.currentIndex === index
                                 onActivated: root.selectTheme(modelData)
                             }
                         }
@@ -2607,8 +2912,13 @@ ApplicationWindow {
                         anchors.left: parent.left
                         anchors.leftMargin: 12
                         anchors.verticalCenter: parent.verticalCenter
-                        text: root.toast.length > 0 ? root.toast : root.statusText
-                        color: root.toast.length > 0 ? colors.accent : colors.faint
+                        text: root.toast.length > 0
+                            ? root.toast
+                            : root.shellRunning && root.page === "shell"
+                                ? "Quickshell “" + root.shellName + "” is running · Ctrl+6 to manage"
+                                : root.statusText
+                        color: root.toast.length > 0 || (root.shellRunning && root.page === "shell")
+                            ? colors.accent : colors.faint
                         font.pixelSize: 10
                         elide: Text.ElideRight
                         width: parent.width - 260

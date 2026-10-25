@@ -7,10 +7,15 @@ Item {
 
     required property var item
     required property bool selected
+    property bool current: false
     signal activated()
 
     implicitWidth: 280
     implicitHeight: 248
+
+    Accessible.role: Accessible.Button
+    Accessible.name: item ? item.name : ""
+    Accessible.description: item ? (item.category || "") + " " + (item.mode || "") : ""
 
     function hex(key, fallback) {
         if (!root.item || !root.item.palette)
@@ -78,7 +83,7 @@ Item {
         radius: 12
         color: root.hex("surfaceContainerLow", root.hex("surfaceContainer", "#16131a"))
         border.width: 1
-        border.color: root.selected
+        border.color: root.selected || root.current
             ? root.hex("primary", "#cfbcff")
             : (hover.hovered ? root.hex("outline", "#4a4054") : root.hex("outlineVariant", "#2b2632"))
         clip: true

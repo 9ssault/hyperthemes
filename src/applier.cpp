@@ -47,6 +47,16 @@ QString Applier::timestampId(const QString &themeId)
         + QLatin1Char('-') + safeId(themeId);
 }
 
+QString Applier::uniqueSessionId(const QString &themeId)
+{
+    const QString base = timestampId(themeId);
+    QString id = base;
+    int counter = 2;
+    while (QFileInfo::exists(sessionDir(id)))
+        id = base + QStringLiteral("-%1").arg(counter++);
+    return id;
+}
+
 QString Applier::sessionDir(const QString &id)
 {
     return Paths::backupsDir() + QLatin1Char('/') + id;
@@ -169,6 +179,35 @@ bool Applier::ensureInclude(Session &session, const QString &path, const QString
     return writeFile(session, path, content.toUtf8(), false);
 }
 
+bool Applier::upsertLine(Session &session, const QString &path, const QString &prefix, const QString &line)
+{
+    QString content;
+    const bool exists = QFileInfo::exists(path);
+    if (exists && !readFile(path, &content)) {
+        session.warnings << QStringLiteral("Could not read %1").arg(path);
+        return false;
+    }
+
+    QStringList lines = content.split(QLatin1Char('\n'));
+    if (!lines.isEmpty() && lines.last().isEmpty())
+        lines.removeLast();
+
+    const QRegularExpression expression(
+        QStringLiteral("^\\s*%1\\b").arg(QRegularExpression::escape(prefix)));
+    bool replaced = false;
+    for (QString &existing : lines) {
+        if (expression.match(existing).hasMatch()) {
+            existing = line;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+        lines.append(line);
+
+    return writeFile(session, path, (lines.join(QLatin1Char('\n')) + QLatin1Char('\n')).toUtf8(), false);
+}
+
 bool Applier::setQtScheme(Session &session, const QString &path)
 {
     if (!backupFile(session, path, false))
@@ -249,6 +288,21 @@ QString Applier::makeKitty(const Theme &theme) const
 QString Applier::makeFoot(const Theme &theme) const
 {
     return TemplateRenderer::render(QStringLiteral("foot.ini"), theme);
+}
+
+QString Applier::makeBtop(const Theme &theme) const
+{
+    return TemplateRenderer::render(QStringLiteral("btop.theme"), theme);
+}
+
+QString Applier::makeZellij(const Theme &theme) const
+{
+    return TemplateRenderer::render(QStringLiteral("zellij.kdl"), theme);
+}
+
+QString Applier::makeHyprland(const Theme &theme) const
+{
+    return TemplateRenderer::render(QStringLiteral("hyprland.conf"), theme);
 }
 
 void Applier::applyWallpaper(Session &session, const Theme &theme)
@@ -479,6 +533,82 @@ void Applier::applyFoot(Session &session, const Theme &theme)
     ensureInclude(session, dir + QStringLiteral("/foot.ini"), QStringLiteral("include=%1/hyperthemes.ini").arg(dir));
 }
 
+void Applier::applyBtop(Session &session, const Theme &theme)
+{
+    const QString dir = Paths::configHome() + QStringLiteral("/btop");
+    if (QStandardPaths::findExecutable(QStringLiteral("btop")).isEmpty() && !QFileInfo::exists(dir)) {
+        session.warnings << QStringLiteral("btop was not detected; skipping its theme");
+        return;
+    }
+
+    const QString content = makeBtop(theme);
+    if (content.isEmpty()) {
+        session.warnings << QStringLiteral("btop template produced nothing");
+        return;
+    }
+
+    QDir().mkpath(dir + QStringLiteral("/themes"));
+    if (!writeFile(session, dir + QStringLiteral("/themes/hyperthemes.theme"), content.toUtf8(), false))
+        return;
+    if (!upsertLine(session, dir + QStringLiteral("/btop.conf"), QStringLiteral("color_theme"),
+                    QStringLiteral("color_theme = \"hyperthemes\"")))
+        return;
+    session.warnings << QStringLiteral("Restart btop to load the hyperthemes theme");
+}
+
+void Applier::applyZellij(Session &session, const Theme &theme)
+{
+    const QString dir = Paths::configHome() + QStringLiteral("/zellij");
+    if (QStandardPaths::findExecutable(QStringLiteral("zellij")).isEmpty() && !QFileInfo::exists(dir)) {
+        session.warnings << QStringLiteral("Zellij was not detected; skipping its theme");
+        return;
+    }
+
+    const QString content = makeZellij(theme);
+    if (content.isEmpty()) {
+        session.warnings << QStringLiteral("Zellij template produced nothing");
+        return;
+    }
+
+    QDir().mkpath(dir + QStringLiteral("/themes"));
+    if (!writeFile(session, dir + QStringLiteral("/themes/hyperthemes.kdl"), content.toUtf8(), false))
+        return;
+    if (!upsertLine(session, dir + QStringLiteral("/config.kdl"), QStringLiteral("theme"),
+                    QStringLiteral("theme \"hyperthemes\"")))
+        return;
+    session.warnings << QStringLiteral("Zellij picks up the theme in new sessions");
+}
+
+void Applier::applyHyprland(Session &session, const Theme &theme)
+{
+    const QString dir = Paths::configHome() + QStringLiteral("/hypr");
+    const bool hasHyprctl = !QStandardPaths::findExecutable(QStringLiteral("hyprctl")).isEmpty();
+    if (!hasHyprctl && !QFileInfo::exists(dir)) {
+        session.warnings << QStringLiteral("Hyprland was not detected; skipping its colours");
+        return;
+    }
+
+    const QString content = makeHyprland(theme);
+    if (content.isEmpty()) {
+        session.warnings << QStringLiteral("Hyprland template produced nothing");
+        return;
+    }
+
+    QDir().mkpath(dir);
+    const QString includePath = dir + QStringLiteral("/hyperthemes.conf");
+    if (!writeFile(session, includePath, content.toUtf8(), false))
+        return;
+    if (!ensureInclude(session, dir + QStringLiteral("/hyprland.conf"),
+                       QStringLiteral("source = %1").arg(includePath)))
+        return;
+
+    if (hasHyprctl && !qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD")) {
+        if (!run(QStringLiteral("hyprctl"), {QStringLiteral("reload")}, 8000))
+            session.warnings << QStringLiteral("Hyprland colours were written, but hyprctl reload failed");
+    }
+    session.warnings << QStringLiteral("Hyprland keeps your window rules; only the generated border and shadow colours change");
+}
+
 void Applier::applySpicetify(Session &session, const Theme &theme)
 {
     if (QStandardPaths::findExecutable(QStringLiteral("spicetify")).isEmpty()) {
@@ -572,7 +702,7 @@ QVariantMap Applier::setWallpaper(const QString &path)
                 {QStringLiteral("error"), QStringLiteral("Wallpaper not found: %1").arg(path)}};
 
     Session session;
-    session.id = timestampId(QStringLiteral("wallpaper"));
+    session.id = uniqueSessionId(QStringLiteral("wallpaper"));
     session.dir = sessionDir(session.id);
     session.themeId = QStringLiteral("wallpaper");
     QDir().mkpath(session.dir + QStringLiteral("/files"));
@@ -602,7 +732,7 @@ QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targe
         return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("This source is browse-only; open the source page to install it")}};
 
     Session session;
-    session.id = timestampId(theme.id);
+    session.id = uniqueSessionId(theme.id);
     session.dir = sessionDir(session.id);
     session.themeId = theme.id;
     session.system = systemWide;
@@ -613,7 +743,9 @@ QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targe
 
     const QStringList requested = targets.isEmpty() ? theme.targets : targets;
     if (systemWide && (requested.contains(QStringLiteral("gtk")) || requested.contains(QStringLiteral("qt"))
-                       || requested.contains(QStringLiteral("waybar")) || requested.contains(QStringLiteral("kitty")))) {
+                       || requested.contains(QStringLiteral("waybar")) || requested.contains(QStringLiteral("kitty"))
+                       || requested.contains(QStringLiteral("btop")) || requested.contains(QStringLiteral("zellij"))
+                       || requested.contains(QStringLiteral("hyprland")))) {
         session.warnings << QStringLiteral("System-wide mode only affects the KDE color scheme; other targets stay in your user config");
     }
     for (const QString &target : requested) {
@@ -635,6 +767,12 @@ QVariantMap Applier::apply(const QVariantMap &themeMap, const QStringList &targe
             applyKitty(session, theme);
         else if (target == QLatin1String("foot"))
             applyFoot(session, theme);
+        else if (target == QLatin1String("btop"))
+            applyBtop(session, theme);
+        else if (target == QLatin1String("zellij"))
+            applyZellij(session, theme);
+        else if (target == QLatin1String("hyprland"))
+            applyHyprland(session, theme);
         else if (target == QLatin1String("spicetify"))
             applySpicetify(session, theme);
         else if (target == QLatin1String("vesktop"))

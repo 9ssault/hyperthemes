@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QThread>
 
 namespace {
 QString safeId(QString id)
@@ -55,6 +56,30 @@ void reloadShell(const QString &target)
 
     if (!QStandardPaths::findExecutable(QStringLiteral("caelestia")).isEmpty())
         QProcess::startDetached(QStringLiteral("caelestia"), {QStringLiteral("shell"), QStringLiteral("-r")});
+}
+
+bool stopPlasmaShell()
+{
+    if (QStandardPaths::findExecutable(QStringLiteral("systemctl")).isEmpty())
+        return false;
+    QString state;
+    if (!runCommand(QStringLiteral("systemctl"),
+                    {QStringLiteral("--user"), QStringLiteral("is-active"),
+                     QStringLiteral("plasma-plasmashell.service")},
+                    &state, 5000))
+        return false;
+    return runCommand(QStringLiteral("systemctl"),
+                      {QStringLiteral("--user"), QStringLiteral("stop"),
+                       QStringLiteral("plasma-plasmashell.service")},
+                      nullptr, 15000);
+}
+
+void startPlasmaShell()
+{
+    if (!QStandardPaths::findExecutable(QStringLiteral("systemctl")).isEmpty())
+        QProcess::startDetached(QStringLiteral("systemctl"),
+                                {QStringLiteral("--user"), QStringLiteral("start"),
+                                 QStringLiteral("plasma-plasmashell.service")});
 }
 
 QJsonObject entry(const QString &id, const QString &zone)
@@ -250,11 +275,17 @@ QVariantMap LayoutApplier::applyKde(const QString &id, const QString &name)
                 {QStringLiteral("backup"), backup}};
     }
 
+    const QStringList arguments = {QStringLiteral("org.kde.plasmashell"), QStringLiteral("/PlasmaShell"),
+                                   QStringLiteral("org.kde.PlasmaShell.evaluateScript"), kdeScript(id)};
     QString output;
-    const bool ok = runCommand(program,
-                               {QStringLiteral("org.kde.plasmashell"), QStringLiteral("/PlasmaShell"),
-                                QStringLiteral("org.kde.PlasmaShell.evaluateScript"), kdeScript(id)},
-                               &output);
+    bool ok = runCommand(program, arguments, &output, 60000);
+    if (!ok) {
+        // plasmashell can briefly refuse scripting right after it restarts;
+        // one retry covers that without risking the previous panels.
+        QThread::msleep(1500);
+        output.clear();
+        ok = runCommand(program, arguments, &output, 60000);
+    }
     if (!ok) {
         return {{QStringLiteral("ok"), false},
                 {QStringLiteral("error"), output.isEmpty() ? QStringLiteral("Plasma rejected the layout script.") : output},
@@ -278,27 +309,34 @@ QString LayoutApplier::kdeScript(const QString &id) const
     const bool minimal = id == QLatin1String("kde-minimal");
 
     QStringList lines;
-    lines << QStringLiteral("const allPanels = panels();")
-          << QStringLiteral("for (let i = 0; i < allPanels.length; ++i) { allPanels[i].remove(); }")
-          << QStringLiteral("const panel = new Panel(\"org.kde.plasma.panel\");")
+    // Build the replacement before touching the old panels so a rejected
+    // script cannot leave the desktop without any panel at all.
+    lines << QStringLiteral("const previousPanels = panels();")
+          << QStringLiteral("let panel = null;")
+          << QStringLiteral("try { panel = new Panel(\"org.kde.panel\"); } catch (error) { try { panel = new Panel(); } catch (fallback) { panel = null; } }")
+          << QStringLiteral("if (panel === null) { throw new Error(\"Plasma refused to create a panel.\"); }")
+          << QStringLiteral("for (let i = 0; i < previousPanels.length; ++i) { try { previousPanels[i].remove(); } catch (error) {} }")
           << QStringLiteral("panel.location = \"%1\";").arg(bottom ? QStringLiteral("bottom") : QStringLiteral("top"))
           << QStringLiteral("panel.height = %1;").arg(bottom ? 52 : (minimal ? 36 : 42));
     if (bottom)
         lines << QStringLiteral("panel.hiding = \"dodgewindows\";");
 
-    lines << QStringLiteral("panel.addWidget(\"org.kde.plasma.kickoff\");");
+    lines << QStringLiteral("const known = (typeof knownWidgetTypes !== \"undefined\") ? knownWidgetTypes : [];")
+          << QStringLiteral("function addWidget(id) { if (known.length > 0 && known.indexOf(id) === -1) { return false; } try { panel.addWidget(id); return true; } catch (error) { return false; } }")
+          << QStringLiteral("function addFirst(ids) { for (let i = 0; i < ids.length; ++i) { if (addWidget(ids[i])) { return true; } } return false; }")
+          << QStringLiteral("addFirst([\"org.kde.plasma.kickoff\", \"org.kde.plasma.kickerdash\", \"org.kde.plasma.kicker\"]);");
     if (!minimal)
-        lines << QStringLiteral("panel.addWidget(\"org.kde.plasma.pager\");");
+        lines << QStringLiteral("addFirst([\"org.kde.plasma.pager\", \"org.kde.plasma.activitypager\"]);");
     if (!minimal && !bottom)
-        lines << QStringLiteral("panel.addWidget(\"org.kde.plasma.icontasks\");")
-              << QStringLiteral("panel.addWidget(\"org.kde.plasma.marginsseparator\");");
+        lines << QStringLiteral("addFirst([\"org.kde.plasma.icontasks\", \"org.kde.plasma.taskmanager\", \"org.kde.plasma.windowlist\"]);")
+              << QStringLiteral("addFirst([\"org.kde.plasma.marginsseparator\", \"org.kde.plasma.panelspacer\"]);");
     if (bottom)
-        lines << QStringLiteral("panel.addWidget(\"org.kde.plasma.icontasks\");");
-    lines << QStringLiteral("panel.addWidget(\"org.kde.plasma.marginsseparator\");")
-          << QStringLiteral("panel.addWidget(\"org.kde.plasma.systemtray\");")
-          << QStringLiteral("panel.addWidget(\"org.kde.plasma.digitalclock\");");
+        lines << QStringLiteral("addFirst([\"org.kde.plasma.icontasks\", \"org.kde.plasma.taskmanager\", \"org.kde.plasma.windowlist\"]);");
+    lines << QStringLiteral("addFirst([\"org.kde.plasma.marginsseparator\", \"org.kde.plasma.panelspacer\"]);")
+          << QStringLiteral("addFirst([\"org.kde.plasma.systemtray\"]);")
+          << QStringLiteral("addFirst([\"org.kde.plasma.digitalclock\", \"org.kde.plasma.fuzzyclock\", \"org.kde.plasma.binaryclock\"]);");
     if (bottom)
-        lines << QStringLiteral("panel.addWidget(\"org.kde.plasma.showdesktop\");");
+        lines << QStringLiteral("addFirst([\"org.kde.plasma.showdesktop\", \"org.kde.plasma.minimizeall\"]);");
 
     return lines.join(QLatin1Char('\n'));
 }
@@ -328,18 +366,36 @@ QVariantMap LayoutApplier::restore(const QString &backupId)
     const QString backupFileRel = manifest.value(QStringLiteral("file")).toString();
     const QString backup = dir + QLatin1Char('/') + backupFileRel;
 
+    const bool restartKde = target == QLatin1String("kde") && !qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD");
+    // Write the file while plasmashell is stopped: a running instance flushes
+    // its in-memory panel config on exit and would overwrite the restore.
+    const bool stopped = restartKde && stopPlasmaShell();
+
     if (existed) {
-        if (!QFileInfo::exists(backup))
+        if (!QFileInfo::exists(backup)) {
+            if (stopped)
+                startPlasmaShell();
             return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("The layout backup file is missing.")}};
+        }
         QFile::remove(path);
         QDir().mkpath(QFileInfo(path).absolutePath());
-        if (!QFile::copy(backup, path))
+        if (!QFile::copy(backup, path)) {
+            if (stopped)
+                startPlasmaShell();
             return {{QStringLiteral("ok"), false}, {QStringLiteral("error"), QStringLiteral("Could not restore the layout file.")}};
+        }
     } else {
         QFile::remove(path);
     }
 
-    reloadShell(target);
+    if (restartKde) {
+        if (stopped)
+            startPlasmaShell();
+        else
+            reloadShell(target);
+    } else {
+        reloadShell(target);
+    }
     m_lastBackup = id;
     emit lastBackupChanged();
     return {{QStringLiteral("ok"), true},

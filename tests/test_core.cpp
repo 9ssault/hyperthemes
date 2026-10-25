@@ -16,6 +16,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -67,6 +69,9 @@ private slots:
     void initTestCase()
     {
         QVERIFY(m_temp.isValid());
+        m_realHome = qEnvironmentVariable("HOME", QDir::homePath());
+        m_realConfig = qEnvironmentVariable("XDG_CONFIG_HOME", m_realHome + QStringLiteral("/.config"));
+        m_realState = qEnvironmentVariable("XDG_STATE_HOME", m_realHome + QStringLiteral("/.local/state"));
         qputenv("HOME", m_temp.path().toUtf8());
         qputenv("XDG_CONFIG_HOME", (m_temp.path() + QStringLiteral("/config")).toUtf8());
         qputenv("XDG_DATA_HOME", (m_temp.path() + QStringLiteral("/data")).toUtf8());
@@ -177,8 +182,10 @@ private slots:
 
         LayoutApplier applier;
         QCOMPARE(applier.presets().size(), 6);
-        QVERIFY(applier.kdeScript(QStringLiteral("kde-top")).contains(QStringLiteral("new Panel")));
+        QVERIFY(applier.kdeScript(QStringLiteral("kde-top")).contains(QStringLiteral("new Panel(\"org.kde.panel\")")));
+        QVERIFY(applier.kdeScript(QStringLiteral("kde-top")).contains(QStringLiteral("knownWidgetTypes")));
         QVERIFY(applier.kdeScript(QStringLiteral("kde-top")).contains(QStringLiteral("org.kde.plasma.kickoff")));
+        QVERIFY(applier.kdeScript(QStringLiteral("kde-bottom")).contains(QStringLiteral("dodgewindows")));
         QVERIFY(applier.kdeScript(QStringLiteral("caelestia-top")).isEmpty());
 
         const QVariantMap result = applier.apply(QStringLiteral("caelestia-bottom"));
@@ -206,6 +213,66 @@ private slots:
         file.close();
         QCOMPARE(original.value(QStringLiteral("bar")).toObject().value(QStringLiteral("position")).toString(),
                  QStringLiteral("top"));
+    }
+
+    void kdeLayoutLive()
+    {
+        if (!qEnvironmentVariableIsSet("HYPER_THEMES_LIVE_PLASMA"))
+            QSKIP("Set HYPER_THEMES_LIVE_PLASMA=1 to script the running Plasma session");
+
+        const QString qdbus = QStandardPaths::findExecutable(QStringLiteral("qdbus6"));
+        if (qdbus.isEmpty())
+            QSKIP("qdbus6 is not installed");
+
+        const auto panelCount = [&qdbus]() -> int {
+            QProcess process;
+            process.start(qdbus, {QStringLiteral("org.kde.plasmashell"), QStringLiteral("/PlasmaShell"),
+                                  QStringLiteral("org.kde.PlasmaShell.evaluateScript"),
+                                  QStringLiteral("print(\"count=\" + panels().length);")});
+            if (!process.waitForFinished(8000) || process.exitCode() != 0)
+                return -1;
+            const QRegularExpressionMatch match = QRegularExpression(QStringLiteral("count=(\\d+)"))
+                                                      .match(QString::fromUtf8(process.readAllStandardOutput()));
+            return match.hasMatch() ? match.captured(1).toInt() : -1;
+        };
+
+        const int before = panelCount();
+        if (before < 0)
+            QSKIP("Plasma is not running on this session");
+
+        const QString configFile = m_realConfig + QStringLiteral("/plasma-org.kde.plasma.desktop-appletsrc");
+        const QString original = readFile(configFile);
+        const bool hadPanelPlugin = original.contains(QStringLiteral("plugin=org.kde.panel"));
+        QVERIFY(QFileInfo::exists(configFile));
+
+        const bool hadNoReload = qEnvironmentVariableIsSet("HYPER_THEMES_NO_RELOAD");
+        qunsetenv("HYPER_THEMES_NO_RELOAD");
+        qputenv("XDG_CONFIG_HOME", m_realConfig.toUtf8());
+        qputenv("XDG_STATE_HOME", m_realState.toUtf8());
+        const auto restoreEnvironment = qScopeGuard([&] {
+            qputenv("XDG_CONFIG_HOME", (m_temp.path() + QStringLiteral("/config")).toUtf8());
+            qputenv("XDG_STATE_HOME", (m_temp.path() + QStringLiteral("/state")).toUtf8());
+            if (hadNoReload)
+                qputenv("HYPER_THEMES_NO_RELOAD", "1");
+        });
+        Q_UNUSED(restoreEnvironment);
+
+        LayoutApplier applier;
+        const QVariantMap applied = applier.apply(QStringLiteral("kde-top"));
+        QVERIFY2(applied.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(applied.value(QStringLiteral("error")).toString()));
+
+        QTRY_COMPARE_WITH_TIMEOUT(panelCount(), 1, 15000);
+
+        const QVariantMap restored = applier.restore(applied.value(QStringLiteral("backup")).toString());
+        QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(restored.value(QStringLiteral("error")).toString()));
+
+        QTRY_COMPARE_WITH_TIMEOUT(panelCount(), before, 25000);
+        QTRY_COMPARE_WITH_TIMEOUT(readFile(configFile).contains(QStringLiteral("plugin=org.kde.panel")),
+                                  hadPanelPlugin, 15000);
+        QVERIFY2(readFile(configFile).contains(QStringLiteral("wallpaperplugin=org.kde.image")),
+                 "the desktop containment was not restored");
     }
 
     void remoteInstallerExtractsArchive()
@@ -320,6 +387,9 @@ private slots:
 
 private:
     QTemporaryDir m_temp;
+    QString m_realHome;
+    QString m_realConfig;
+    QString m_realState;
 };
 
 QTEST_MAIN(CoreTest)

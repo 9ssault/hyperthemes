@@ -70,6 +70,22 @@ ApplicationWindow {
     property var layoutWarnings: []
     property string layoutError: ""
 
+    property var shellWidgets: []
+    property var shellZones: ({ left: [], center: [], right: [] })
+    property string shellName: "hyperthemes"
+    property string shellPosition: "top"
+    property int shellBarHeight: 34
+    property int shellMargin: 6
+    property int shellRadius: 10
+    property real shellOpacity: 0.94
+    property bool shellLauncher: true
+    property bool shellDashboard: true
+    property bool shellHasQuickshell: false
+    property string shellResult: ""
+    property var shellFiles: []
+    property var shellBackups: []
+    property string shellError: ""
+
     property string wallpaperPath: ""
     property string wallpaperUrl: ""
     property string dynamicMode: "dark"
@@ -473,6 +489,99 @@ ApplicationWindow {
     function refreshLayouts() {
         layoutPresets = LayoutApplier.presets();
         layoutBackups = LayoutApplier.backups();
+    }
+
+    function loadShellDefaults() {
+        shellWidgets = ShellBuilder.widgets();
+        var defaults = ShellBuilder.defaults();
+        shellName = defaults.name;
+        shellPosition = defaults.position;
+        shellBarHeight = defaults.barHeight;
+        shellMargin = defaults.margin;
+        shellRadius = defaults.radius;
+        shellOpacity = defaults.opacity;
+        shellLauncher = defaults.launcher;
+        shellDashboard = defaults.dashboard;
+        shellZones = defaults.zones;
+        shellHasQuickshell = ShellBuilder.quickshellAvailable();
+        shellBackups = ShellBuilder.backups();
+    }
+
+    function shellZoneList(zone) {
+        return shellZones && shellZones[zone] ? shellZones[zone] : [];
+    }
+
+    function shellHasWidget(id, zone) {
+        return shellZoneList(zone).indexOf(id) >= 0;
+    }
+
+    function shellSetWidget(id, zone, enabled) {
+        var next = { left: [], center: [], right: [] };
+        for (var key in next) {
+            next[key] = shellZoneList(key).filter(function(widget) {
+                return widget !== id;
+            });
+        }
+        if (enabled)
+            next[zone].push(id);
+        shellZones = next;
+    }
+
+    function shellChip(id) {
+        var labels = {
+            logo: "◆",
+            workspaces: "●●●",
+            launcher: "⌕",
+            clock: "12:30",
+            media: "♪",
+            tray: "▦",
+            battery: "82%",
+            statusIcons: "◍",
+            power: "⏻"
+        };
+        return labels[id] || id;
+    }
+
+    function shellConfig() {
+        return {
+            name: shellName,
+            position: shellPosition,
+            barHeight: shellBarHeight,
+            margin: shellMargin,
+            radius: shellRadius,
+            opacity: shellOpacity,
+            launcher: shellLauncher,
+            dashboard: shellDashboard,
+            zones: shellZones,
+            palette: selected ? selected.palette : ({}),
+            themeName: selected ? selected.name : "HyperThemes"
+        };
+    }
+
+    function shellBuild() {
+        shellError = "";
+        shellResult = "";
+        shellFiles = [];
+        var result = ShellBuilder.build(shellConfig());
+        if (result.ok) {
+            shellResult = result.dir;
+            shellFiles = result.files;
+            shellBackups = ShellBuilder.backups();
+            notify("Quickshell config written to " + result.dir);
+        } else {
+            shellError = result.error || "The config could not be written.";
+            notify(shellError);
+        }
+    }
+
+    function shellRestore(id) {
+        var result = ShellBuilder.restore(id);
+        if (result.ok) {
+            shellBackups = ShellBuilder.backups();
+            notify((result.warnings || ["Restored"])[0]);
+        } else {
+            notify(result.error || "The backup could not be restored.");
+        }
     }
 
     function applyLayout(id) {
@@ -1134,6 +1243,7 @@ ApplicationWindow {
         loadCatalog();
         refreshBackups();
         refreshLayouts();
+        loadShellDefaults();
     }
 
     Rectangle {
@@ -1227,6 +1337,14 @@ ApplicationWindow {
                     label: "Layouts"
                     active: root.page === "layouts"
                     onClicked: root.page = "layouts"
+                }
+
+                NavButton {
+                    Layout.fillWidth: true
+                    iconSource: "qrc:/data/icons/window.svg"
+                    label: "Shell"
+                    active: root.page === "shell"
+                    onClicked: root.page = "shell"
                 }
 
                 NavButton {
@@ -1402,6 +1520,8 @@ ApplicationWindow {
                                         ? "Settings"
                                         : root.page === "categories"
                                             ? "Categories"
+                                            : root.page === "shell"
+                                                ? "Quickshell builder"
                                             : root.page === "mine"
                                                 ? "My themes"
                                                 : "Explore themes"
@@ -1421,6 +1541,8 @@ ApplicationWindow {
                                         ? "Sources, backups, and what HyperThemes can reach on this machine."
                                         : root.page === "categories"
                                             ? "Browse the catalog by collection or by theme family."
+                                        : root.page === "shell"
+                                            ? "Generate a standalone Quickshell config from the selected palette."
                                         : root.page === "mine"
                                             ? "Imported schemes and generated palettes. Add a folder to grow this shelf."
                                             : "One catalog for KDE, Quickshell, Waybar, terminals, and chat apps."
@@ -2461,6 +2583,16 @@ ApplicationWindow {
 
                                 Item { Layout.preferredHeight: 8 }
                             }
+                        }
+                    }
+
+                    Item {
+                        anchors.fill: parent
+                        visible: root.page === "shell"
+
+                        ShellBuilderPage {
+                            anchors.fill: parent
+                            app: root
                         }
                     }
                 }

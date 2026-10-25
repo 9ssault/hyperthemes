@@ -17,6 +17,7 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 - **Dynamic wallpapers** — pick any image, let `matugen` derive a complete palette, apply that palette, or set the custom wallpaper on its own. The chosen image is remembered between launches.
 - **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, Spicetify and Vesktop.
 - **Layout presets** — three Caelestia bar layouts and three KDE Plasma panel layouts, applied with a backup and a restore path.
+- **Quickshell builder** — compose a standalone Quickshell config (bar zones, entries, launcher, dashboard, radius, opacity) from the selected palette and write it to `~/.config/quickshell/<name>/`, previewed in-app.
 - **User or system-wide** — KDE color schemes can be written to `~/.local/share/color-schemes` or `/usr/share/color-schemes` through `pkexec`.
 - **Backups** — `~/.local/state/hyperthemes/backups/<timestamp>-<theme>/` contains the previous files and a manifest. Restore from the Settings page. Layouts use a separate `layout-backups/` tree.
 
@@ -91,6 +92,29 @@ The downloader:
 - picks a KDE `.colors` file first, then JSON, then text schemes.
 
 A downloaded `.colors` file is applied through the KDE color scheme target. A palette JSON or Caelestia scheme gets the normal multi-target target list. Nothing is written to desktop configuration until **Apply** is pressed.
+
+## Quickshell builder
+
+The **Shell** page composes a self-contained [Quickshell](https://quickshell.org) config from the selected palette:
+
+- bar position, height, margin, corner radius and opacity;
+- entries per zone (left, centre, right) chosen from logo, workspaces, launcher, clock, media, tray, battery, status icons and power;
+- optional application launcher and dashboard with lock, log-out, reboot and power actions.
+
+**Write config** creates `~/.config/quickshell/<name>/` with:
+
+```
+shell.qml                 ShellRoot wiring the modules together
+Theme.qml                 colours and sizes taken from the palette
+bar/Bar.qml               the PanelWindow bar
+launcher/Launcher.qml     optional application launcher
+dashboard/Dashboard.qml   optional clock/media/battery + power actions
+README.md                 how to run and extend it
+```
+
+Run it with `qs -c <name>`. The preview above the output panel shows the bar with the real palette and chosen entries. Workspaces and status icons are marked placeholders; connect them to your compositor's services.
+
+Every write copies the previous folder to `~/.local/state/hyperthemes/shell-backups/<timestamp>-<name>/`, and **Restore last** puts it back. Generated files are linted with `qmllint` in the test suite whenever Quickshell's QML module is installed.
 
 ## Catalog data
 
@@ -186,4 +210,4 @@ ctest --test-dir build --output-on-failure
 QT_QPA_PLATFORM=offscreen ./build/hyperthemes
 ```
 
-The tests cover palette fallbacks, every template, apply/rollback, Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, and a QML smoke test. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.
+The tests cover palette fallbacks, every template, apply/rollback, Caelestia layout merge/restore, KDE package handling, direct remote palette downloads, archive extraction, symlink rejection, per-file catalog loading (1,655 themes in well under a second), category filtering, target filters, palette-driven app colours, wallpaper persistence, Quickshell config generation and restoration, and a QML smoke test. Set `HYPER_THEMES_LIVE_PLASMA=1` to also script the running Plasma session. `matugen` tests skip automatically when it is not installed. Warnings and QML errors go to stderr. The backup manifests are plain JSON, so an apply can be audited after the fact.

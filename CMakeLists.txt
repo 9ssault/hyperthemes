@@ -33,6 +33,8 @@ qt_add_executable(hyperthemes
     src/paths.h
     src/remoteinstaller.cpp
     src/remoteinstaller.h
+    src/shellbuilder.cpp
+    src/shellbuilder.h
     src/templaterenderer.cpp
     src/templaterenderer.h
     src/theme.cpp
@@ -85,6 +87,8 @@ if(BUILD_TESTING)
         src/paths.h
         src/remoteinstaller.cpp
         src/remoteinstaller.h
+        src/shellbuilder.cpp
+        src/shellbuilder.h
         src/templaterenderer.cpp
         src/templaterenderer.h
         src/theme.cpp
@@ -127,6 +131,8 @@ if(BUILD_TESTING)
         src/paths.h
         src/remoteinstaller.cpp
         src/remoteinstaller.h
+        src/shellbuilder.cpp
+        src/shellbuilder.h
         src/templaterenderer.cpp
         src/templaterenderer.h
         src/theme.cpp

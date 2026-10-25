@@ -7,6 +7,7 @@
 #include "palettegenerator.h"
 #include "paths.h"
 #include "remoteinstaller.h"
+#include "shellbuilder.h"
 #include "templaterenderer.h"
 #include "theme.h"
 
@@ -17,6 +18,7 @@
 #include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLibraryInfo>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QScopeGuard>
@@ -201,6 +203,119 @@ private slots:
             categories.insert(theme.value(QStringLiteral("category")).toString());
         }
         QVERIFY2(categories.size() >= 40, qPrintable(QStringLiteral("only %1 categories").arg(categories.size())));
+    }
+
+    void shellBuilderWritesQuickshellConfig()
+    {
+        ShellBuilder builder;
+        QVERIFY(builder.widgets().size() >= 8);
+
+        QVariantMap config = builder.defaults();
+        config.insert(QStringLiteral("palette"), sampleTheme().value(QStringLiteral("palette")));
+        config.insert(QStringLiteral("themeName"), QStringLiteral("Test Theme"));
+        config.insert(QStringLiteral("name"), QStringLiteral("hyperthemes-test"));
+
+        const QVariantMap result = builder.build(config);
+        QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(result.value(QStringLiteral("error")).toString()));
+
+        const QString dir = result.value(QStringLiteral("dir")).toString();
+        QCOMPARE(dir, Paths::configHome() + QStringLiteral("/quickshell/hyperthemes-test"));
+
+        const QStringList files = result.value(QStringLiteral("files")).toStringList();
+        QVERIFY(files.contains(QStringLiteral("shell.qml")));
+        QVERIFY(files.contains(QStringLiteral("Theme.qml")));
+        QVERIFY(files.contains(QStringLiteral("bar/Bar.qml")));
+        QVERIFY(files.contains(QStringLiteral("launcher/Launcher.qml")));
+        QVERIFY(files.contains(QStringLiteral("dashboard/Dashboard.qml")));
+
+        const QString theme = readFile(dir + QStringLiteral("/Theme.qml"));
+        QVERIFY(theme.contains(QStringLiteral("#ff0000")));
+        QVERIFY(theme.contains(QStringLiteral("barHeight: 34")));
+        QVERIFY(theme.contains(QStringLiteral("Test Theme")));
+
+        const QString dump = qEnvironmentVariable("HT_SHELL_DUMP");
+        if (!dump.isEmpty()) {
+            QDir(dump).removeRecursively();
+            QDir().mkpath(dump);
+            QDirIterator it(dir, QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                const QString path = it.next();
+                const QString relative = QDir(dir).relativeFilePath(path);
+                const QString target = dump + QLatin1Char('/') + relative;
+                QDir().mkpath(QFileInfo(target).absolutePath());
+                QFile::copy(path, target);
+            }
+        }
+
+        // When Quickshell is installed, lint the generated tree so a template
+        // change cannot ship syntactically broken QML.
+        const QString imports = QLibraryInfo::path(QLibraryInfo::QmlImportsPath);
+        const QString lint = QStandardPaths::findExecutable(QStringLiteral("qmllint"));
+        if (!lint.isEmpty() && QFileInfo::exists(imports + QStringLiteral("/Quickshell"))) {
+            const QStringList targets = {QStringLiteral("shell.qml"), QStringLiteral("Theme.qml"),
+                                         QStringLiteral("bar/Bar.qml"),
+                                         QStringLiteral("launcher/Launcher.qml"),
+                                         QStringLiteral("dashboard/Dashboard.qml")};
+            for (const QString &target : targets) {
+                QProcess process;
+                process.setWorkingDirectory(dir);
+                process.start(lint, {target});
+                QVERIFY(process.waitForFinished(20000));
+                const QString output = QString::fromUtf8(process.readAllStandardOutput()
+                                                         + process.readAllStandardError());
+                QVERIFY2(process.exitCode() == 0,
+                         qPrintable(target + QStringLiteral(": ") + output));
+            }
+        }
+
+        const QString shell = readFile(dir + QStringLiteral("/shell.qml"));
+        QVERIFY(shell.contains(QStringLiteral("ShellRoot")));
+        QVERIFY(shell.contains(QStringLiteral("qs -c hyperthemes-test")));
+        QVERIFY(shell.contains(QStringLiteral("onLauncherRequested: launcher.toggle()")));
+
+        const QString bar = readFile(dir + QStringLiteral("/bar/Bar.qml"));
+        QVERIFY(bar.contains(QStringLiteral("PanelWindow")));
+        QVERIFY(bar.contains(QStringLiteral("top: true")));
+        QVERIFY(bar.contains(QStringLiteral("SystemTray.items")));
+        QVERIFY(bar.contains(QStringLiteral("theme.barHeight")));
+
+        config.insert(QStringLiteral("position"), QStringLiteral("bottom"));
+        config.insert(QStringLiteral("launcher"), false);
+        config.insert(QStringLiteral("dashboard"), false);
+        config.insert(QStringLiteral("zones"), QVariantMap{
+            {QStringLiteral("left"), QStringList{QStringLiteral("logo")}},
+            {QStringLiteral("center"), QStringList{QStringLiteral("media")}},
+            {QStringLiteral("right"), QStringList{QStringLiteral("battery")}},
+        });
+        const QVariantMap second = builder.build(config);
+        QVERIFY2(second.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(second.value(QStringLiteral("error")).toString()));
+        QVERIFY(!second.value(QStringLiteral("backup")).toString().isEmpty());
+        QVERIFY(builder.backups().size() >= 2);
+
+        const QString bottomBar = readFile(dir + QStringLiteral("/bar/Bar.qml"));
+        QVERIFY(bottomBar.contains(QStringLiteral("bottom: true")));
+        QVERIFY(!bottomBar.contains(QStringLiteral("top: true")));
+        QVERIFY(!bottomBar.contains(QStringLiteral("SystemTray.items")));
+        QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
+        QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/dashboard/Dashboard.qml")));
+        QVERIFY(!readFile(dir + QStringLiteral("/shell.qml")).contains(QStringLiteral("Launcher {")));
+
+        QVariantMap badName = config;
+        badName.insert(QStringLiteral("name"), QStringLiteral("Bad Name!"));
+        QVERIFY(!builder.build(badName).value(QStringLiteral("ok")).toBool());
+
+        QVariantMap withoutPalette = builder.defaults();
+        withoutPalette.insert(QStringLiteral("name"), QStringLiteral("no-palette"));
+        const QVariantMap rejected = builder.build(withoutPalette);
+        QVERIFY(!rejected.value(QStringLiteral("ok")).toBool());
+        QVERIFY(rejected.value(QStringLiteral("error")).toString().contains(QStringLiteral("theme")));
+
+        const QVariantMap restored = builder.restore(second.value(QStringLiteral("backup")).toString());
+        QVERIFY2(restored.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(restored.value(QStringLiteral("error")).toString()));
+        QVERIFY(QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
     }
 
     void wallpaperOnlyApplyChecksTheFile()

@@ -6,6 +6,7 @@
 #include "localsource.h"
 #include "palettegenerator.h"
 #include "remoteinstaller.h"
+#include "shellbuilder.h"
 
 #include <QDir>
 #include <QFile>
@@ -41,6 +42,7 @@ private slots:
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "PaletteGenerator", &m_paletteGenerator);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "RemoteInstaller", &m_remoteInstaller);
         qmlRegisterSingletonInstance("HyperThemes", 1, 0, "LayoutApplier", &m_layoutApplier);
+        qmlRegisterSingletonInstance("HyperThemes", 1, 0, "ShellBuilder", &m_shellBuilder);
 
         m_engine.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
         QVERIFY2(!m_engine.rootObjects().isEmpty(), "Main.qml produced no root object");
@@ -159,6 +161,41 @@ private slots:
                                           Q_ARG(QVariant, QStringLiteral("#0d0a10"))));
         QCOMPARE(primary.toString(), QStringLiteral("#0d0a10"));
         m_root->setProperty("followPalette", true);
+    }
+
+    void quickshellBuilderPage()
+    {
+        const QVariantList themes = m_root->property("themes").toList();
+        QVERIFY(!themes.isEmpty());
+        QVERIFY(QMetaObject::invokeMethod(m_root, "selectTheme", Q_ARG(QVariant, themes.first())));
+
+        m_root->setProperty("page", QStringLiteral("shell"));
+        QVERIFY(m_root->property("shellWidgets").toList().size() >= 8);
+
+        m_root->setProperty("shellName", QStringLiteral("test-shell"));
+        m_root->setProperty("shellBarHeight", 40);
+        m_root->setProperty("shellLauncher", false);
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellBuild"));
+        QTRY_VERIFY(!m_root->property("shellFiles").toStringList().isEmpty());
+        QCOMPARE(m_root->property("shellError").toString(), QString());
+
+        const QString dir = m_root->property("shellResult").toString();
+        QVERIFY(dir.endsWith(QStringLiteral("/quickshell/test-shell")));
+        QVERIFY(QFileInfo::exists(dir + QStringLiteral("/shell.qml")));
+        QVERIFY(QFileInfo::exists(dir + QStringLiteral("/bar/Bar.qml")));
+        QVERIFY(!QFileInfo::exists(dir + QStringLiteral("/launcher/Launcher.qml")));
+        QVERIFY(QFileInfo::exists(dir + QStringLiteral("/dashboard/Dashboard.qml")));
+
+        const QVariantMap zones = m_root->property("shellZones").toMap();
+        QVERIFY(zones.value(QStringLiteral("center")).toStringList().contains(QStringLiteral("clock")));
+        QVERIFY(QMetaObject::invokeMethod(m_root, "shellSetWidget", Q_ARG(QVariant, QStringLiteral("clock")),
+                                          Q_ARG(QVariant, QStringLiteral("left")), Q_ARG(QVariant, true)));
+        QVERIFY(m_root->property("shellZones").toMap().value(QStringLiteral("left")).toStringList()
+                    .contains(QStringLiteral("clock")));
+        QVERIFY(!m_root->property("shellZones").toMap().value(QStringLiteral("center")).toStringList()
+                     .contains(QStringLiteral("clock")));
+
+        m_root->setProperty("page", QStringLiteral("explore"));
     }
 
     void wallpaperSelectionIsRemembered()
@@ -351,6 +388,7 @@ private:
     PaletteGenerator m_paletteGenerator;
     RemoteInstaller m_remoteInstaller;
     LayoutApplier m_layoutApplier;
+    ShellBuilder m_shellBuilder;
     QQmlApplicationEngine m_engine;
     QObject *m_root = nullptr;
 };

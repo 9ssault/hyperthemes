@@ -1,0 +1,29 @@
+/* HyperThemes layout polish. The palette comes from color.ini. */
+.main-home-homeHeader {
+  display: none !important;
+}
+
+.main-trackList-trackListRow,
+.main-contextMenu-menuItemButton,
+.main-topBar-searchBar {
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.main-topBar-searchBar {
+  background-color: var(--spice-main-elevated) !important;
+}
+
+.main-topBar-background,
+.main-home-filterChipsContainer {
+  background: linear-gradient(to bottom, var(--spice-main-elevated), var(--spice-main)) !important;
+}
+
+.main-entityHeader-shadow {
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(var(--spice-rgb-shadow), 0.45);
+}
+
+.os-scrollbar-handle {
+  background: var(--spice-button) !important;
+  border-radius: 8px;
+}

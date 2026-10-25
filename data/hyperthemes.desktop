@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=HyperThemes
+Comment=Browse, generate and apply desktop color themes
+Exec=hyperthemes
+Icon=hyperthemes
+Terminal=false
+Categories=Settings;DesktopSettings;Qt;
+Keywords=theme;color;palette;plasma;quickshell;waybar;
+StartupNotify=true

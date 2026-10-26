@@ -27,8 +27,8 @@ const QVector<QPair<QString, QString>> &knownTargets()
         {QStringLiteral("zellij"), QStringLiteral("Zellij")},
         {QStringLiteral("hyprland"), QStringLiteral("Hyprland")},
         {QStringLiteral("cursor"), QStringLiteral("Mouse pointer / Xcursor theme")},
-        {QStringLiteral("spicetify"), QStringLiteral("Spotify / Spicetify")},
-        {QStringLiteral("vesktop"), QStringLiteral("Discord / Vesktop")},
+        {QStringLiteral("lazyspotify"), QStringLiteral("Spotify / lazyspotify")},
+        {QStringLiteral("vesktop"), QStringLiteral("Discord / Equibop")},
     };
     return targets;
 }
@@ -287,13 +287,16 @@ Cli::Result Cli::run(const QStringList &arguments)
     QStringList targets;
     for (const QString &requested : options.targets) {
         const QString target = requested.trimmed().toLower();
-        if (!targetNames().contains(target)) {
+        // Equibop and Vesktop use the same Vencord theme format; the applier
+        // writes to whichever clients are installed.
+        const QString canonical = target == QLatin1String("equibop") ? QStringLiteral("vesktop") : target;
+        if (!targetNames().contains(canonical)) {
             result.exitCode = 2;
             result.error = usageError(QStringLiteral("Unknown target “%1”. Run --list-targets.").arg(requested));
             return result;
         }
-        if (!targets.contains(target))
-            targets << target;
+        if (!targets.contains(canonical))
+            targets << canonical;
     }
 
     const QVariantList themes = Catalog().load();

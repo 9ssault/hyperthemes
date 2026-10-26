@@ -18,8 +18,10 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonValue>
 #include <QLibraryInfo>
 #include <QProcess>
 #include <QRegularExpression>
@@ -116,8 +118,7 @@ private slots:
             QStringLiteral("kde.colors"), QStringLiteral("caelestia.json"), QStringLiteral("waybar.css"),
             QStringLiteral("gtk.css"), QStringLiteral("qt.conf"), QStringLiteral("konsole.colorscheme"),
             QStringLiteral("kitty.conf"), QStringLiteral("foot.ini"), QStringLiteral("btop.theme"),
-            QStringLiteral("zellij.kdl"), QStringLiteral("hyprland.conf"), QStringLiteral("spicetify.ini"),
-            QStringLiteral("spicetify-user.css"), QStringLiteral("vesktop.css")
+            QStringLiteral("zellij.kdl"), QStringLiteral("hyprland.conf"), QStringLiteral("lazyspotify.sh"), QStringLiteral("vesktop.css")
         };
         for (const QString &name : templates) {
             const QString rendered = TemplateRenderer::render(name, theme);
@@ -126,6 +127,7 @@ private slots:
         }
         QVERIFY(TemplateRenderer::render(QStringLiteral("kitty.conf"), theme).contains(QStringLiteral("color15")));
         QVERIFY(TemplateRenderer::render(QStringLiteral("kitty.conf"), theme).contains(QStringLiteral("color0 #")));
+        QVERIFY(TemplateRenderer::render(QStringLiteral("lazyspotify.sh"), theme).contains(QStringLiteral("-e lazyspotify")));
     }
 
     void themeMapKeepsPackageFields()
@@ -206,6 +208,44 @@ private slots:
         QVERIFY(readFile(config + QStringLiteral("/btop/btop.conf")).contains(QStringLiteral("color_theme = \"Default\"")));
         QVERIFY(readFile(config + QStringLiteral("/zellij/config.kdl")).contains(QStringLiteral("theme \"default\"")));
         QVERIFY(!readFile(config + QStringLiteral("/hypr/hyprland.conf")).contains(QStringLiteral("hyperthemes.conf")));
+    }
+
+    void discordTargetCoversEquibop()
+    {
+        QDir(Paths::configHome()).removeRecursively();
+        const QString config = Paths::home()
+            + QStringLiteral("/.var/app/org.equicord.equibop/config/equibop");
+        QDir().mkpath(config + QStringLiteral("/settings"));
+        writeFile(config + QStringLiteral("/settings/settings.json"),
+                  QStringLiteral("{\"enabledThemes\":[\"midnight.css\"],\"token\":\"keep\"}"));
+
+        Applier applier;
+        const QVariantMap result = applier.apply(sampleTheme(), {QStringLiteral("equibop")}, false);
+        QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(result.value(QStringLiteral("error")).toString() + QStringLiteral(" / ")
+                            + result.value(QStringLiteral("warnings")).toStringList().join(QStringLiteral("; "))));
+
+        const QString theme = config + QStringLiteral("/themes/hyperthemes.css");
+        QVERIFY(QFileInfo::exists(theme));
+        QVERIFY(readFile(theme).contains(QStringLiteral("#ff0000")));
+
+        const QJsonObject settings =
+            QJsonDocument::fromJson(readFile(config + QStringLiteral("/settings/settings.json")).toUtf8())
+                .object();
+        const QJsonArray enabled = settings.value(QStringLiteral("enabledThemes")).toArray();
+        QVERIFY(enabled.contains(QJsonValue(QStringLiteral("midnight.css"))));
+        QVERIFY(enabled.contains(QJsonValue(QStringLiteral("hyperthemes.css"))));
+        QCOMPARE(settings.value(QStringLiteral("token")).toString(), QStringLiteral("keep"));
+
+        // The catalog still names this target "vesktop"; the alias must keep working
+        // and keep writing to Equibop now that it is the installed client.
+        QFile::remove(theme);
+        const QVariantMap legacy = applier.apply(sampleTheme(), {QStringLiteral("vesktop")}, false);
+        QVERIFY2(legacy.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(legacy.value(QStringLiteral("warnings")).toStringList().join(QStringLiteral("; "))));
+        QVERIFY(QFileInfo::exists(theme));
+
+        QDir(Paths::home() + QStringLiteral("/.var/app/org.equicord.equibop")).removeRecursively();
     }
 
     void cursorThemeIsAValidXcursor()
@@ -419,6 +459,32 @@ private slots:
         QVERIFY(!QFileInfo::exists(gtkFile));
         QVERIFY(!QFileInfo::exists(qtSettings));
         QVERIFY(!QFileInfo::exists(qtColors));
+    }
+
+    void lazyspotifyLauncherUsesThePalette()
+    {
+        const QString wrapper = Paths::home() + QStringLiteral("/.local/bin/lazyspotify-hyperthemes");
+        const QString desktop = Paths::dataHome()
+            + QStringLiteral("/applications/lazyspotify-hyperthemes.desktop");
+        QFile::remove(wrapper);
+        QFile::remove(desktop);
+
+        Applier applier;
+        const QVariantMap result = applier.apply(sampleTheme(), {QStringLiteral("lazyspotify")}, false);
+        QVERIFY2(result.value(QStringLiteral("ok")).toBool(),
+                 qPrintable(result.value(QStringLiteral("warnings")).toStringList().join(QStringLiteral("; "))));
+        QVERIFY(QFileInfo::exists(wrapper));
+        QVERIFY(QFileInfo(wrapper).isExecutable());
+        const QString script = readFile(wrapper);
+        QVERIFY(script.contains(QStringLiteral("-e lazyspotify")));
+        QVERIFY(script.contains(QStringLiteral("#101014")));
+        QVERIFY(QFileInfo::exists(desktop));
+        QVERIFY(readFile(desktop).contains(wrapper));
+
+        const QVariantMap restored = applier.rollback(result.value(QStringLiteral("backup")).toString());
+        QVERIFY(restored.value(QStringLiteral("ok")).toBool());
+        QVERIFY(!QFileInfo::exists(wrapper));
+        QVERIFY(!QFileInfo::exists(desktop));
     }
 
     void catalogLoadsEveryThemeFile()

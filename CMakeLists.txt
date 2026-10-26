@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network Qml Quick QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Network WebSockets Qml Quick QuickControls2)
 
 qt_standard_project_setup()
 
@@ -53,6 +53,7 @@ target_link_libraries(hyperthemes PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Network
+    Qt6::WebSockets
     Qt6::Qml
     Qt6::Quick
     Qt6::QuickControls2
@@ -110,6 +111,7 @@ if(BUILD_TESTING)
         Qt6::Core
         Qt6::Gui
         Qt6::Network
+        Qt6::WebSockets
         Qt6::Test
     )
 
@@ -158,6 +160,7 @@ if(BUILD_TESTING)
         Qt6::Core
         Qt6::Gui
         Qt6::Network
+        Qt6::WebSockets
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2

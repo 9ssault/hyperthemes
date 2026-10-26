@@ -169,7 +169,7 @@ TARGETS = [
     "konsole",
     "kitty",
     "foot",
-    "spicetify",
+    "lazyspotify",
     "vesktop",
 ]
 

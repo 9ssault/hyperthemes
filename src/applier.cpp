@@ -7,17 +7,24 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QTimer>
+#include <QUrl>
 #include <QUuid>
+#include <QWebSocket>
 
 namespace {
 QString safeId(QString id)
@@ -334,15 +341,16 @@ QString Applier::makeCaelestia(const Theme &theme) const
     return TemplateRenderer::render(QStringLiteral("caelestia.json"), theme);
 }
 
-QString Applier::makeSpicetify(const Theme &theme) const
+QString Applier::makeLazyspotify(const Theme &theme) const
 {
-    return TemplateRenderer::render(QStringLiteral("spicetify.ini"), theme);
+    return TemplateRenderer::render(QStringLiteral("lazyspotify.sh"), theme);
 }
 
-QString Applier::makeVesktop(const Theme &theme) const
+QString Applier::makeDiscord(const Theme &theme) const
 {
     return TemplateRenderer::render(QStringLiteral("vesktop.css"), theme);
 }
+
 
 QString Applier::makeKonsole(const Theme &theme) const
 {
@@ -767,92 +775,261 @@ void Applier::applyCursor(Session &session, const Theme &theme)
     session.warnings << QStringLiteral("The HyperThemes pointer is selected; restart open apps (or sign out) to refresh their cursor");
 }
 
-void Applier::applySpicetify(Session &session, const Theme &theme)
+void Applier::applyLazyspotify(Session &session, const Theme &theme)
 {
-    if (QStandardPaths::findExecutable(QStringLiteral("spicetify")).isEmpty()) {
-        session.warnings << QStringLiteral("Spicetify is not installed; skipping Spotify");
+    const QString wrapper = Paths::home() + QStringLiteral("/.local/bin/lazyspotify-hyperthemes");
+    const QString content = makeLazyspotify(theme);
+    if (content.isEmpty()) {
+        session.warnings << QStringLiteral("lazyspotify template produced nothing");
         return;
     }
-
-    const QString dir = Paths::configHome() + QStringLiteral("/spicetify/Themes/HyperThemes");
-    QDir().mkpath(dir);
-    writeFile(session, dir + QStringLiteral("/color.ini"), makeSpicetify(theme).toUtf8(), false);
-    writeFile(session, dir + QStringLiteral("/user.css"),
-              TemplateRenderer::render(QStringLiteral("spicetify-user.css"), theme).toUtf8(), false);
-
+    if (!writeFile(session, wrapper, content.toUtf8(), false))
+        return;
     if (!session.dryRun) {
-        const QString config = Paths::configHome() + QStringLiteral("/spicetify/config-xpui.ini");
-        backupFile(session, config, false);
-        QString output;
-        if (!run(QStringLiteral("spicetify"),
-                 {QStringLiteral("config"), QStringLiteral("current_theme"), QStringLiteral("HyperThemes"),
-                  QStringLiteral("color_scheme"), QStringLiteral("hyperthemes"),
-                  QStringLiteral("inject_css"), QStringLiteral("1"),
-                  QStringLiteral("replace_colors"), QStringLiteral("1")},
-                 30000, &output)) {
-            session.warnings << QStringLiteral("Spicetify config failed: %1").arg(output.trimmed());
-            return;
-        }
-
-        if (run(QStringLiteral("pgrep"), {QStringLiteral("-x"), QStringLiteral("spotify")}, 3000)) {
-            session.warnings << QStringLiteral("Spotify is running; close it and run 'spicetify apply' to load the theme");
-        } else if (!run(QStringLiteral("spicetify"), {QStringLiteral("apply")}, 120000, &output)) {
-            session.warnings << QStringLiteral("Spicetify apply failed: %1").arg(output.trimmed());
-        }
+        QFile::setPermissions(wrapper,
+                              QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+                                  | QFileDevice::ReadGroup | QFileDevice::ExeGroup
+                                  | QFileDevice::ReadOther | QFileDevice::ExeOther);
     }
-    session.warnings << QStringLiteral("Spicetify patches Spotify's client files; use 'spicetify restore' to undo that part");
+
+    const QString desktop = Paths::dataHome()
+        + QStringLiteral("/applications/lazyspotify-hyperthemes.desktop");
+    const QString entry = QStringLiteral(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=lazyspotify (HyperThemes)\n"
+        "Comment=Terminal Spotify client in the HyperThemes palette\n"
+        "Exec=\"%1\"\n"
+        "Terminal=false\n"
+        "Categories=AudioVideo;Player;\n"
+        "Icon=multimedia-player\n").arg(wrapper);
+    if (writeFile(session, desktop, entry.toUtf8(), false) && !session.dryRun) {
+        QFile::setPermissions(desktop,
+                              QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                  | QFileDevice::ReadGroup | QFileDevice::ReadOther);
+    }
+
+    if (QStandardPaths::findExecutable(QStringLiteral("lazyspotify")).isEmpty()) {
+        session.warnings << QStringLiteral(
+            "lazyspotify is missing on this machine; the launcher is ready at "
+            "~/.local/bin/lazyspotify-hyperthemes. Install it from "
+            "https://github.com/dubeyKartikay/lazyspotify");
+    } else {
+        session.warnings << QStringLiteral(
+            "lazyspotify takes colours from the terminal palette; launch "
+            "lazyspotify-hyperthemes (or its desktop entry) for this theme");
+    }
 }
 
-void Applier::applyVesktop(Session &session, const Theme &theme)
+bool Applier::reloadDiscordTheme(QString *error) const
 {
-    const QString flatpakBase = Paths::home() + QStringLiteral("/.var/app/dev.vencord.Vesktop");
-    const QString configBase = QFileInfo::exists(flatpakBase)
-        ? flatpakBase + QStringLiteral("/config/vesktop")
-        : Paths::configHome() + QStringLiteral("/vesktop");
+    // Equibop exposes a loopback DevTools port (the same one the Caelestia
+    // widget uses). Talking to it lets a running client pick up the new theme
+    // without a restart, instead of writing settings that the client would
+    // flush back over on exit.
+    const auto fail = [error](const QString &message) {
+        if (error)
+            *error = message;
+        return false;
+    };
 
-    if (!QFileInfo::exists(flatpakBase)
-        && !QFileInfo::exists(configBase)
-        && QStandardPaths::findExecutable(QStringLiteral("vesktop")).isEmpty()) {
-        session.warnings << QStringLiteral("Vesktop was not detected; skipping Discord");
-        return;
+    QNetworkAccessManager manager;
+    QNetworkReply *reply = manager.get(
+        QNetworkRequest(QUrl(QStringLiteral("http://127.0.0.1:9222/json"))));
+    QEventLoop discovery;
+    QTimer discoveryTimeout;
+    discoveryTimeout.setSingleShot(true);
+    QObject::connect(&discoveryTimeout, &QTimer::timeout, &discovery, &QEventLoop::quit);
+    QObject::connect(reply, &QNetworkReply::finished, &discovery, &QEventLoop::quit);
+    discoveryTimeout.start(2000);
+    discovery.exec();
+    if (!reply->isFinished()) {
+        reply->abort();
+        reply->deleteLater();
+        return fail(QStringLiteral("the DevTools endpoint did not answer"));
     }
+    const QByteArray payload = reply->readAll();
+    const QNetworkReply::NetworkError networkError = reply->error();
+    reply->deleteLater();
+    if (networkError != QNetworkReply::NoError)
+        return fail(QStringLiteral("the DevTools endpoint is closed"));
 
-    const QString themes = configBase + QStringLiteral("/themes");
-    QDir().mkpath(themes);
-    const QString content = makeVesktop(theme);
-    if (content.isEmpty()) {
-        session.warnings << QStringLiteral("Vesktop template produced nothing");
-        return;
-    }
-    if (!writeFile(session, themes + QStringLiteral("/hyperthemes.css"), content.toUtf8(), false))
-        return;
-
-    const QString settingsPath = configBase + QStringLiteral("/settings/settings.json");
-    QJsonObject settings;
-    QString existing;
-    if (readFile(settingsPath, &existing)) {
-        const QJsonDocument document = QJsonDocument::fromJson(existing.toUtf8());
-        if (document.isObject())
-            settings = document.object();
-    }
-    QJsonArray enabled = settings.value(QStringLiteral("enabledThemes")).toArray();
-    bool found = false;
-    for (const QJsonValue &value : std::as_const(enabled)) {
-        if (value.toString() == QStringLiteral("hyperthemes.css")) {
-            found = true;
+    QString socketUrl;
+    const QJsonArray pages = QJsonDocument::fromJson(payload).array();
+    for (const QJsonValue &value : pages) {
+        const QJsonObject page = value.toObject();
+        if (page.value(QStringLiteral("type")).toString() == QLatin1String("page")
+            && page.value(QStringLiteral("url")).toString().contains(QStringLiteral("discord.com"))) {
+            socketUrl = page.value(QStringLiteral("webSocketDebuggerUrl")).toString();
             break;
         }
     }
-    if (!found)
-        enabled.append(QStringLiteral("hyperthemes.css"));
-    settings.insert(QStringLiteral("enabledThemes"), enabled);
+    if (socketUrl.isEmpty())
+        return fail(QStringLiteral("no Discord page is open"));
 
-    QDir().mkpath(configBase + QStringLiteral("/settings"));
-    writeFile(session, settingsPath, QJsonDocument(settings).toJson(QJsonDocument::Indented), false);
+    QWebSocket socket;
+    QEventLoop connection;
+    QTimer connectionTimeout;
+    connectionTimeout.setSingleShot(true);
+    QObject::connect(&socket, &QWebSocket::connected, &connection, &QEventLoop::quit);
+    QObject::connect(&socket, &QWebSocket::errorOccurred, &connection, &QEventLoop::quit);
+    QObject::connect(&connectionTimeout, &QTimer::timeout, &connection, &QEventLoop::quit);
+    socket.open(QUrl(socketUrl));
+    connectionTimeout.start(3000);
+    connection.exec();
+    if (socket.state() != QAbstractSocket::ConnectedState) {
+        socket.abort();
+        return fail(QStringLiteral("the client did not accept the connection"));
+    }
 
-    if (!session.dryRun
-        && run(QStringLiteral("pgrep"), {QStringLiteral("-f"), QStringLiteral("vesktop")}, 3000)) {
-        session.warnings << QStringLiteral("Vesktop is running; restart it to load hyperthemes.css");
+    // Re-assigning the same list would not notify Vencord, so remove the theme
+    // first and add it back a moment later, which reloads the CSS.
+    const QString expression = QStringLiteral(
+        "(() => {"
+        " const V = window.Vencord;"
+        " if (!V || !V.Settings) return 'no-vencord';"
+        " const current = [...(V.Settings.enabledThemes || [])];"
+        " if (current.includes('hyperthemes.css')) {"
+        "   V.Settings.enabledThemes = current.filter(t => t !== 'hyperthemes.css');"
+        "   setTimeout(() => { V.Settings.enabledThemes = current; }, 60);"
+        " } else {"
+        "   V.Settings.enabledThemes = [...current, 'hyperthemes.css'];"
+        " }"
+        " return 'ok';"
+        "})()");
+
+    QJsonObject request;
+    request.insert(QStringLiteral("id"), 1);
+    request.insert(QStringLiteral("method"), QStringLiteral("Runtime.evaluate"));
+    request.insert(QStringLiteral("params"),
+                   QJsonObject{{QStringLiteral("expression"), expression},
+                               {QStringLiteral("returnByValue"), true}});
+
+    bool confirmed = false;
+    QEventLoop response;
+    QTimer responseTimeout;
+    responseTimeout.setSingleShot(true);
+    QObject::connect(&socket, &QWebSocket::textMessageReceived, &response,
+                     [&confirmed, &response](const QString &message) {
+                         const QJsonObject object = QJsonDocument::fromJson(message.toUtf8()).object();
+                         if (object.value(QStringLiteral("id")).toInt() != 1)
+                             return;
+                         const QString value = object.value(QStringLiteral("result"))
+                                                   .toObject()
+                                                   .value(QStringLiteral("result"))
+                                                   .toObject()
+                                                   .value(QStringLiteral("value"))
+                                                   .toString();
+                         confirmed = value == QLatin1String("ok");
+                         response.quit();
+                     });
+    QObject::connect(&responseTimeout, &QTimer::timeout, &response, &QEventLoop::quit);
+    socket.sendTextMessage(QString::fromUtf8(QJsonDocument(request).toJson(QJsonDocument::Compact)));
+    responseTimeout.start(2000);
+    response.exec();
+    socket.close();
+
+    if (!confirmed)
+        return fail(QStringLiteral("the client did not confirm the reload"));
+    return true;
+}
+
+void Applier::applyDiscord(Session &session, const Theme &theme)
+{
+    // Equibop and Vesktop share the Vencord theme format, so the same CSS is
+    // written to every client that is installed. Equibop is checked first
+    // because it is the client we support going forward.
+    struct Client {
+        QString name;
+        QString flatpakId;
+        QString configName;
+        QString executable;
+    };
+    static const Client clients[] = {
+        {QStringLiteral("Equibop"), QStringLiteral("org.equicord.equibop"),
+         QStringLiteral("equibop"), QStringLiteral("equibop")},
+        {QStringLiteral("Vesktop"), QStringLiteral("dev.vencord.Vesktop"),
+         QStringLiteral("vesktop"), QStringLiteral("vesktop")},
+    };
+
+    const QString content = makeDiscord(theme);
+    if (content.isEmpty()) {
+        session.warnings << QStringLiteral("Discord template produced nothing");
+        return;
+    }
+
+    bool detected = false;
+    QStringList runningClients;
+    for (const Client &client : clients) {
+        const QString flatpakBase = Paths::home() + QStringLiteral("/.var/app/") + client.flatpakId;
+        const bool flatpak = QFileInfo::exists(flatpakBase);
+        const QString configBase = flatpak
+            ? flatpakBase + QStringLiteral("/config/") + client.configName
+            : Paths::configHome() + QLatin1Char('/') + client.configName;
+
+        // A leftover config folder (for example after a Flatpak uninstall)
+        // must not count as an installed client: require a real settings store
+        // or an executable on PATH.
+        const bool hasStore = QFileInfo::exists(configBase + QStringLiteral("/settings"));
+        const bool hasExecutable =
+            !QStandardPaths::findExecutable(client.executable).isEmpty();
+        if (!flatpak && !hasStore && !hasExecutable)
+            continue;
+
+        detected = true;
+        const QString themes = configBase + QStringLiteral("/themes");
+        QDir().mkpath(themes);
+        if (!writeFile(session, themes + QStringLiteral("/hyperthemes.css"), content.toUtf8(), false))
+            continue;
+
+        const QString settingsPath = configBase + QStringLiteral("/settings/settings.json");
+        QJsonObject settings;
+        QString existing;
+        if (readFile(settingsPath, &existing)) {
+            const QJsonDocument document = QJsonDocument::fromJson(existing.toUtf8());
+            if (document.isObject())
+                settings = document.object();
+        }
+        QJsonArray enabled = settings.value(QStringLiteral("enabledThemes")).toArray();
+        bool found = false;
+        for (const QJsonValue &value : std::as_const(enabled)) {
+            if (value.toString() == QStringLiteral("hyperthemes.css")) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            enabled.append(QStringLiteral("hyperthemes.css"));
+        settings.insert(QStringLiteral("enabledThemes"), enabled);
+
+        QDir().mkpath(configBase + QStringLiteral("/settings"));
+        writeFile(session, settingsPath, QJsonDocument(settings).toJson(QJsonDocument::Indented), false);
+
+        // Match the launch wrapper, not the bare client name: pgrep -f would
+        // also match this process when the target name is on its command line.
+        const QString process = flatpak
+            ? QStringLiteral("start") + client.configName
+            : client.executable;
+        const bool running = !session.dryRun
+            && (flatpak ? run(QStringLiteral("pgrep"), {QStringLiteral("-f"), process}, 3000)
+                        : run(QStringLiteral("pgrep"), {QStringLiteral("-x"), process}, 3000));
+        if (running)
+            runningClients << client.name;
+    }
+
+    if (!detected) {
+        session.warnings << QStringLiteral("Equibop or Vesktop was not detected; skipping Discord");
+        return;
+    }
+
+    if (!runningClients.isEmpty()) {
+        QString error;
+        if (!reloadDiscordTheme(&error)) {
+            for (const QString &name : std::as_const(runningClients)) {
+                session.warnings << QStringLiteral("%1 is running; restart it to load hyperthemes.css (%2)")
+                                        .arg(name, error);
+            }
+        }
     }
 }
 
@@ -953,10 +1130,10 @@ QVariantMap Applier::applyInternal(const QVariantMap &themeMap, const QStringLis
             applyHyprland(session, theme);
         else if (target == QLatin1String("cursor"))
             applyCursor(session, theme);
-        else if (target == QLatin1String("spicetify"))
-            applySpicetify(session, theme);
-        else if (target == QLatin1String("vesktop"))
-            applyVesktop(session, theme);
+        else if (target == QLatin1String("lazyspotify"))
+            applyLazyspotify(session, theme);
+        else if (target == QLatin1String("vesktop") || target == QLatin1String("equibop"))
+            applyDiscord(session, theme);
         else {
             known = false;
             session.warnings << QStringLiteral("Unknown target: %1").arg(target);

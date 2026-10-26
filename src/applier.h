@@ -64,8 +64,8 @@ private:
 
     QString makeKde(const Theme &theme) const;
     QString makeCaelestia(const Theme &theme) const;
-    QString makeSpicetify(const Theme &theme) const;
-    QString makeVesktop(const Theme &theme) const;
+    QString makeLazyspotify(const Theme &theme) const;
+    QString makeDiscord(const Theme &theme) const;
     QString makeKonsole(const Theme &theme) const;
     QString makeKitty(const Theme &theme) const;
     QString makeFoot(const Theme &theme) const;
@@ -87,8 +87,9 @@ private:
     void applyZellij(Session &session, const Theme &theme);
     void applyHyprland(Session &session, const Theme &theme);
     void applyCursor(Session &session, const Theme &theme);
-    void applySpicetify(Session &session, const Theme &theme);
-    void applyVesktop(Session &session, const Theme &theme);
+    void applyLazyspotify(Session &session, const Theme &theme);
+    void applyDiscord(Session &session, const Theme &theme);
+    bool reloadDiscordTheme(QString *error) const;
 
     static bool run(const QString &program, const QStringList &args, int timeoutMs = 15000, QString *output = nullptr);
     static bool runPrivileged(const QStringList &args, int timeoutMs = 60000, QString *output = nullptr);

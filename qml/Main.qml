@@ -18,7 +18,7 @@ ApplicationWindow {
     color: colors.bg
     font.family: Qt.application.font.family
 
-    readonly property var allTargets: ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "btop", "zellij", "hyprland", "cursor", "spicetify", "vesktop"]
+    readonly property var allTargets: ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "btop", "zellij", "hyprland", "cursor", "lazyspotify", "vesktop"]
     readonly property var extraTargets: ["btop", "zellij", "hyprland"]
 
     property var themes: []
@@ -332,7 +332,7 @@ ApplicationWindow {
         if (filter === "terminals")
             return targets.indexOf("konsole") >= 0 || targets.indexOf("kitty") >= 0 || targets.indexOf("foot") >= 0;
         if (filter === "apps")
-            return targets.indexOf("spicetify") >= 0 || targets.indexOf("vesktop") >= 0;
+            return targets.indexOf("lazyspotify") >= 0 || targets.indexOf("vesktop") >= 0;
         return targets.indexOf(filter) >= 0;
     }
 
@@ -374,8 +374,9 @@ ApplicationWindow {
             zellij: "Zellij",
             hyprland: "Hyprland",
             cursor: "Mouse pointer",
-            spicetify: "Spotify / Spicetify",
-            vesktop: "Discord / Vesktop",
+            lazyspotify: "Spotify / lazyspotify",
+            vesktop: "Discord / Equibop",
+            equibop: "Discord / Equibop",
             wallpaper: "Wallpaper"
         };
         return labels[key] || key;

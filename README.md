@@ -20,7 +20,7 @@ It is local-first: every file it changes is copied to a timestamped backup befor
 - **Self-theming** — the app restyles its own surfaces, text, accents and controls from the selected palette. Toggle it in Settings if you prefer the default shell.
 - **Palette previews** — every installed entry exposes its real values; remote cards say "no palette yet" instead of inventing colours from a name.
 - **Dynamic wallpapers** — pick any image, let `matugen` derive a complete palette, apply that palette, or set the custom wallpaper on its own. The chosen image is remembered between launches.
-- **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, btop, Zellij, Hyprland, mouse pointer, Spicetify and Vesktop.
+- **Targets** — KDE color scheme, Caelestia / Quickshell scheme, Waybar, GTK 3/4, Qt 5/6, Konsole, kitty, foot, btop, Zellij, Hyprland, mouse pointer, lazyspotify and Discord (Equibop, with Vesktop still supported).
 - **Mouse pointer** — build an Xcursor theme from the palette (arrow, hand, text, resize, watch, zoom, copy, alias, link, pencil and drag-and-drop shapes) and select it for Xcursor, GTK, Plasma, GNOME and `environment.d`, so the pointer you use everywhere matches the theme. The inspector previews every generated shape with its hotspot, and a 16–128 px slider sets the size that is drawn into the files and used when a running session is switched. The theme is rewritten in place, and a rollback restores the previous cursor settings.
 - **Layout presets** — three Caelestia bar layouts and three KDE Plasma panel layouts, applied with a backup and a restore path.
 - **Quickshell builder** — compose a standalone Quickshell config (bar zones, 19 entries including separators, spacers, system load, uptime, memory and notifications, typography, launcher, dashboard, notification tray, radius, opacity, per-monitor bars) from the selected palette, write it to `~/.config/quickshell/<name>/`, validate it with `qmllint`, run and stop it, export it, copy its run command, or load an earlier generated config back into the builder. The preview draws each widget in its real form instead of a generic label.
@@ -95,7 +95,7 @@ hyperthemes --list-configs
 | `btop` / `zellij` | Detecting those targets; their config directories also count |
 | `qs` / `quickshell` | Running a generated shell from the Shell page |
 | `qmllint` | Validating the generated Quickshell config (needs Quickshell's QML module) |
-| `spicetify` | Spotify palette |
+| `lazyspotify` | Spotify palette for the lazyspotify TUI |
 | `pkexec` | System-wide KDE writes |
 
 HyperThemes skips targets whose tools or config directories are missing and reports why in the inspector.
@@ -202,7 +202,7 @@ The script wipes stale `*.json` files in the output directory before writing, so
   "kind": "static",
   "mode": "dark",
   "flavour": "default",
-  "targets": ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "spicetify", "vesktop"],
+  "targets": ["kde", "caelestia", "waybar", "gtk", "qt", "konsole", "kitty", "foot", "lazyspotify", "vesktop"],
   "palette": {
     "background": "1e0d0f",
     "onBackground": "f9d5d7",
@@ -229,8 +229,7 @@ The generated files are small and readable:
 - `templates/btop.theme`
 - `templates/zellij.kdl`
 - `templates/hyprland.conf`
-- `templates/spicetify.ini`
-- `templates/spicetify-user.css`
+- `templates/lazyspotify.sh`
 - `templates/vesktop.css`
 
 Placeholders use `{{role}}`, `{{role.rgb}}` and `{{role.stripped}}`. Add a template and a corresponding target in `src/applier.cpp` to extend the app.
@@ -250,11 +249,10 @@ Every layout apply creates a manifest under `~/.local/state/hyperthemes/layout-b
 
 - Remote installs understand color-scheme payloads and Plasma packages with a `metadata.json`. Archives that only contain panel layouts, icon packs, or app-specific assets are downloaded and inspected but cannot be applied as a palette or package; the app reports that instead of pretending it succeeded.
 - KDE layout presets replace the current panels. Restore exists, but a custom panel arrangement should be backed up externally if it matters.
-- Spicetify patches Spotify's client files; use `spicetify restore` if you want stock Spotify back.
+- lazyspotify is a terminal client, so it inherits the terminal's 16-colour palette. Its target writes `~/.local/bin/lazyspotify-hyperthemes` and a desktop entry that launches it in a themed kitty window when kitty is available, then foot's themed config, then the current terminal.
 - Konsole uses the scheme after you select **HyperThemes** in its profile settings.
 - btop, Zellij and Hyprland need a restart (or `hyprctl reload`) to pick up their generated files.
-- Vesktop needs a restart (or a theme toggle) after a color change.
-- A Flatpak update can reset the Spotify patch; re-apply the Spicetify target after updating.
+- Equibop needs a restart (or a theme toggle) after a color change. The `vesktop` target writes the same theme to Equibop and to Vesktop when both are installed; `--target equibop` is accepted as an alias.
 - System-wide writes only cover the KDE color scheme. Everything else stays in XDG user directories.
 
 ## Development

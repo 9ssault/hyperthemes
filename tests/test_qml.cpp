@@ -465,6 +465,9 @@ private slots:
 
     void targetSelectionIsRemembered()
     {
+        const QStringList targets = m_root->property("allTargets").toStringList();
+        QVERIFY(targets.contains(QStringLiteral("lazyspotify")));
+        QVERIFY(!targets.contains(QStringLiteral("spicetify")));
         QVariantMap chosen;
         QVariantMap other;
         const QVariantList themes = m_root->property("themes").toList();
